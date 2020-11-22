@@ -35,6 +35,10 @@ class MultiBoxPrior(nn.Module):
         self.scales = to_tensor(ifnone(scales, Defaults.scales))
         self.ratios = to_tensor(ifnone(ratios, Defaults.ratios))
 
+    @property
+    def num_anchors(self):
+        return len(self.scales) * len(self.ratios)
+
     def forward(self, image):
         im_hw = np.array(image.size()[2:])
         fmap_sizes = [tuple(im_hw // x) for x in self.strides]
@@ -118,6 +122,7 @@ if __name__ == "__main__":
     img = torch.randn(4, 3, 512, 512)
     anchors = anchor(img)
     print(anchors.size())
+    print(anchors.sort(dim=-1))
 
     # im_size = 256
     # pyramid_levels = [3, 4, 5, 6, 7]
