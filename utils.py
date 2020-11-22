@@ -21,5 +21,12 @@ def to_tensor(x: Any):
         raise exc
 
 
+def xyxy_to_xywh(t: torch.Tensor) -> torch.Tensor:
+    assert (
+        t.size(1) == 4
+    ), "input tensor must be of size `(N, 4)` with format `(xmin, ymin, xmax, ymax)`"
+    pass
+
+
 if __name__ == "__main__":
     print(ifnone(None))
