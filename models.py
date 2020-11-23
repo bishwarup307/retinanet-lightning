@@ -229,7 +229,7 @@ class ConvBNRelu(nn.Module):
         return self.block(t)
 
 
-class TopDownBlock(nn.Module):
+class UpsampleSkipBlock(nn.Module):
     """
     Upsample and merge with skip connection block.
                 upsample 2x
@@ -258,7 +258,7 @@ class TopDownBlock(nn.Module):
     def __init__(
         self, in_channels: int, lateral_channels: int, upsample: Optional[str] = None
     ):
-        super(TopDownBlock, self).__init__()
+        super(UpsampleSkipBlock, self).__init__()
         if upsample is not None:
             assert upsample in (
                 "nearest",
@@ -326,8 +326,8 @@ class FPN(nn.Module):
         ch_c3, ch_c4, ch_c5 = in_channels
 
         self.p5 = Conv_1x1(ch_c5, channels)
-        self.p4 = TopDownBlock(channels, ch_c4, upsample)
-        self.p3 = TopDownBlock(channels, ch_c3, upsample)
+        self.p4 = UpsampleSkipBlock(channels, ch_c4, upsample)
+        self.p3 = UpsampleSkipBlock(channels, ch_c3, upsample)
         self.p6 = nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1)
         self.p7 = nn.Sequential(
             nn.ReLU(), nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1)
@@ -388,7 +388,7 @@ def _get_backbone(
 
 
 if __name__ == "__main__":
-    input_t = torch.randn(4, 3, 256, 256)
+    input_t = torch.randn(4, 3, 512, 512)
     # backbone = _get_backbone("resnext_50")
     # backbone = ResNet(depth=50, pretrained=False)
     # fmap_channels = _get_feature_depths(str(backbone))

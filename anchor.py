@@ -39,6 +39,7 @@ class MultiBoxPrior(nn.Module):
     def num_anchors(self):
         return len(self.scales) * len(self.ratios)
 
+    @torch.no_grad()
     def forward(self, image):
         im_hw = np.array(image.size()[2:])
         fmap_sizes = [tuple(im_hw // x) for x in self.strides]
