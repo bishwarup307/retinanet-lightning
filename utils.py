@@ -1,8 +1,8 @@
 """
-__author__: bishwarup.b (bishwarup.b@eagleview.com)
+__author__: bishwarup307
 Created: 21/11/20
-Copyright EagleView, 2020
 """
+
 import os
 from pathlib import Path
 from typing import Any, Union
