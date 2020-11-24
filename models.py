@@ -91,8 +91,8 @@ class ResNet(nn.Module):
     """
     Implements ResNet backbone for retinanet.
     Args:
-        depth [int]: depth for resnet, one of 18, 34, 50, 101, 152
-        pretrained [bool]: whether to load pretrained ImageNet weights
+        depth (int): depth for resnet, one of 18, 34, 50, 101, 152
+        pretrained (bool): whether to load pretrained ImageNet weights
     """
 
     def __init__(self, depth: int, pretrained: bool = False):
@@ -150,8 +150,8 @@ class ResNeXt(ResNet, nn.Module):
     """
     Implements ResNeXt backbone for retinanet.
     Args:
-        depth [int]: depth for resnet, either 50 or 101
-        pretrained [bool]: whether to load pretrained ImageNet weights
+        depth (int): depth for resnet, either 50 or 101
+        pretrained (bool): whether to load pretrained ImageNet weights
     """
 
     def __init__(self, depth: int, pretrained: bool = False):
@@ -170,8 +170,8 @@ class WideResNet(ResNet, nn.Module):
     """
     Implements Wide ResNet backbone for retinanet.
     Args:
-        depth [int]: depth for resnet, either 50 or 101
-        pretrained [bool]: whether to load pretrained ImageNet weights
+        depth (int): depth for resnet, either 50 or 101
+        pretrained (bool): whether to load pretrained ImageNet weights
     """
 
     def __init__(self, depth: int, pretrained: bool = False):
@@ -247,12 +247,12 @@ class UpsampleSkipBlock(nn.Module):
     aliasing (or checkerboard if ConvTranspose2d is used https://distill.pub/2016/deconv-checkerboard/)
 
     Args:
-        in_channels [int]: incoming channels from top
-        lateral_channels [int]: incoming channels from skip connection
-        upsample [Optional[str]]: whether to use upsampling. choices are `nearest` or `bilinear`. ConvTranspose2d is
+        in_channels (int): incoming channels from top
+        lateral_channels (int): incoming channels from skip connection
+        upsample (Optional[str]): whether to use upsampling. choices are `nearest` or `bilinear`. ConvTranspose2d is
         used instead if `None`. Default is `None`.
     Returns:
-        [torch.Tensor]: merged feature map from top and lateral branches.
+        (torch.Tensor): merged feature map from top and lateral branches.
     """
 
     def __init__(
@@ -307,10 +307,10 @@ class FPN(nn.Module):
     ##############################################################################################
 
     Args:
-        in_channels [Sequence[int]]: Channels from the bottom up backbone. e.g. for ResNet based backbones
+        in_channels (Sequence[int]): Channels from the bottom up backbone. e.g. for ResNet based backbones
         depth of features from layer2, layer3 and layer4.
-        channels [int]: dimension of the top down channels. Default is 256 as in the retinanet paper.
-        upsample [Optional[str]]: whether to use upsampling. choices are `nearest` or `bilinear`. ConvTranspose2d is
+        channels (int): dimension of the top down channels. Default is 256 as in the retinanet paper.
+        upsample (Optional[str]): whether to use upsampling. choices are `nearest` or `bilinear`. ConvTranspose2d is
         used instead if `None`. Default is `None`.
     Returns:
         List[Torch.Tensor]: [P3, P4, P5, P6, P7] where P represents pyramid features at various levels.
@@ -346,7 +346,7 @@ def _get_feature_depths(model_name: str) -> Tuple[int, int, int]:
     """
     Get depth of feature maps from various backbones.
     Args:
-        model_name [str]: model str representing the pretrained models.
+        model_name (str): model str representing the pretrained models.
 
     Returns:
         Tuple[int, int, int]: dimension of [C3, C4, C5].
@@ -388,7 +388,7 @@ def _get_backbone(
 
 
 if __name__ == "__main__":
-    input_t = torch.randn(4, 3, 512, 512)
+    input_t = torch.randn(4, 3, 256, 256)
     # backbone = _get_backbone("resnext_50")
     # backbone = ResNet(depth=50, pretrained=False)
     # fmap_channels = _get_feature_depths(str(backbone))

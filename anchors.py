@@ -20,6 +20,23 @@ class Defaults:
 
 
 class MultiBoxPrior(nn.Module):
+    """
+    Generates anchors (priors) across all pyramid levels for multiscale object detection.
+    https://arxiv.org/abs/1708.02002
+    Args:
+        pyramid_levels (Optional[Sequence[int]]): levels of backbone network for which priors
+        should be calculated. Defaults to [3, 4, 5, 6, 7] as described in the paper.
+        strides (Optional[Sequence[int]]): strides (downsample ratio) of the feature maps at
+        specified pyramid levels. Defaults to [8, 16, 32, 64, 128].
+        sizes (Optional[Sequence[int]]): base size of anchors on top of which `scales` and
+        `ratios` are imposed. Defaults to [32^2, 64^2, 128^2, 256^2, 512^2] as described in the
+        paper.
+        scales (Optional[Sequence[int]]): scales for the anchors. Defaults to [1, 2 ^ (1/3), 2 ^ (2/3)]
+        as described in the paper.
+        ratios (Optional[Sequence[int]]): aspect ratios for the anchors. Defaults to [0.5, 1, 2] as
+        described in the paper.
+    """
+
     def __init__(
         self,
         pyramid_levels: Optional[Sequence[int]] = None,
@@ -93,14 +110,15 @@ def _project_anchors(
     fmap_shape: Sequence[int], stride: int, anchors: torch.Tensor
 ) -> torch.Tensor:
     """
-    project the calculated anchors in each (W x H) positions of a feature map
+    project the calculated anchors in each (W x H) positions of a feature map.
     Args:
-        fmap_shape [Tuple[int, int]]: shape of the feature map (W x H)
-        stride [int]: stride of the feature map (downscale ratio to original image size)
-        anchors [torch.Tensor]: calculated anchors for a given stride
+        fmap_shape (Tuple[int, int]): shape of the feature map (W x H)
+        stride (int): stride of the feature map (downscale ratio to original image size)
+        anchors (torch.Tensor): calculated anchors for a given stride
 
     Returns:
-
+        torch.Tensor: anchor over all locations of a feature map. Given A anchors, the shape
+        would be `(A x H x W, 4)`
     """
     fh, fw = fmap_shape[:2]
     x_mids = (torch.arange(fw) + 0.5) * stride
@@ -120,7 +138,7 @@ def _project_anchors(
 
 if __name__ == "__main__":
     anchor = MultiBoxPrior()
-    img = torch.randn(4, 3, 512, 512)
+    img = torch.randn(4, 3, 256, 256)
     anchors = anchor(img)
     print(anchors.size())
     print(anchors.sort(dim=-1))
