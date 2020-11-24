@@ -140,3 +140,4 @@ cython_debug/
 *.pth
 *.pt
 .idea/
+.vscode/
