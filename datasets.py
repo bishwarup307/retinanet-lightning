@@ -27,7 +27,7 @@ class CocoDataset(Dataset):
         image_size: Tuple[int, int],
         normalize: Optional[Dict] = None,
         transform: Optional[Dict] = None,
-        return_ids: bool = False,
+        train: bool = True,
         nsr: float = None,
     ):
         """
@@ -39,6 +39,8 @@ class CocoDataset(Dataset):
         self.image_dir = image_dir
         self.transform = transform
         self.image_size = image_size
+        self.train = train
+
         try:
             self.normalize_mean = normalize["mean"]
             self.normalize_std = normalize["std"]
@@ -51,7 +53,7 @@ class CocoDataset(Dataset):
 
         self.coco = COCO(json_path)
         self.image_ids = self.coco.getImgIds()
-        self.return_ids = return_ids
+        self.return_ids = not train
         self.nsr = nsr if nsr is not None else 1.0
 
         self.classes = {}
@@ -169,10 +171,12 @@ class CocoDataset(Dataset):
 
         sample["img"] = torch.from_numpy(sample["img"].astype(np.float32))
         sample["annot"] = torch.from_numpy(sample["annot"].astype(np.float32))
-        gt_boxes, gt_cls = get_anchor_labels(
-            self.anchors, sample["annot"][:, :4], sample["annot"][:, 4]
-        )
-        return sample["img"].permute(2, 0, 1).contiguous(), gt_boxes, gt_cls
+        if self.train:
+            gt_boxes, gt_cls = get_anchor_labels(
+                self.anchors, sample["annot"][:, :4], sample["annot"][:, 4]
+            )
+            return sample["img"].permute(2, 0, 1).contiguous(), gt_boxes, gt_cls
+        return sample
 
     def _coco_label_to_label(self, coco_label):
         return self.coco_labels_inverse[coco_label]

@@ -52,7 +52,7 @@ class RetinaNet(pl.LightningModule):
             self.backbone.freeze_bn()
 
         self.classification_loss = FocalLoss(
-            alpha=focal_loss_alpha, gamma=focal_loss_gamma
+            alpha=focal_loss_alpha, gamma=focal_loss_gamma, reduction="mean"
         )
 
     def forward(self, t: torch.Tensor):
@@ -84,6 +84,8 @@ class RetinaNet(pl.LightningModule):
         masked_target_one_hot = F.one_hot(
             masked_gt.long(), num_classes=self.num_classes + 1  # +1 for background
         ).float()
+        # background class is not used for loss calculation
+        # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
         cls_loss = self.classification_loss(masked_logits, masked_target_one_hot[:, 1:])
 
         # calculate regression loss
