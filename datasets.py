@@ -3,8 +3,7 @@ __author__: bishwarup307
 Created: 23/11/20
 """
 import os
-from pathlib import Path
-from typing import Union, Optional, Dict, Sequence
+from typing import Optional, Dict, Tuple
 
 import cv2
 import numpy as np
@@ -13,7 +12,9 @@ from PIL import Image
 from pycocotools.coco import COCO
 from torch.utils.data import Dataset
 
-from utils import ifdir
+from anchors import MultiBoxPrior
+from augments import Resizer, Augmenter, Normalizer
+from utils import get_anchor_labels
 
 
 class CocoDataset(Dataset):
@@ -23,7 +24,7 @@ class CocoDataset(Dataset):
         self,
         image_dir: str,
         json_path: str,
-        image_size: Sequence[int],
+        image_size: Tuple[int, int],
         normalize: Optional[Dict] = None,
         transform: Optional[Dict] = None,
         return_ids: bool = False,
@@ -35,8 +36,6 @@ class CocoDataset(Dataset):
             transform (callable, optional): Optional transform to be applied
                 on a sample.
         """
-        # self.root_dir = root_dir
-        # self.set_name = set_name
         self.image_dir = image_dir
         self.transform = transform
         self.image_size = image_size
@@ -44,7 +43,11 @@ class CocoDataset(Dataset):
             self.normalize_mean = normalize["mean"]
             self.normalize_std = normalize["std"]
         except TypeError:
-            self.normalize_mean, self.normalize_std = None, None
+            self.normalize_mean, self.normalize_std = [0.485, 0.456, 0.406], [
+                0.229,
+                0.224,
+                0.225,
+            ]
 
         self.coco = COCO(json_path)
         self.image_ids = self.coco.getImgIds()
@@ -56,6 +59,9 @@ class CocoDataset(Dataset):
         self.coco_labels = {}
         self.coco_labels_inverse = {}
         self._load_classes()
+        m = MultiBoxPrior()
+        sample_input = torch.randn(1, 3, *image_size)
+        self.anchors = m(sample_input)
 
         self._obtain_weights()
         # print(f"number of classes: {self.num_classes}")
@@ -73,7 +79,8 @@ class CocoDataset(Dataset):
             sample = resize(sample)
 
         if self.transform is not None:
-            sample = _transform_image(sample, self.transform)
+            augment = Augmenter(self.transform)
+            sample = augment(sample)
 
         if self.return_ids:
             return self._to_tensor(sample), self.image_ids[idx]
@@ -141,9 +148,17 @@ class CocoDataset(Dataset):
             annotation[0, 4] = self._coco_label_to_label(a["category_id"])
             annotations = np.append(annotations, annotation, axis=0)
 
-        # transform from [x, y, w, h] to [x1, y1, x2, y2]
-        annotations[:, 2] = annotations[:, 0] + annotations[:, 2]
-        annotations[:, 3] = annotations[:, 1] + annotations[:, 3]
+        # albumentation complains if bbox coordinates are equal to image shape in
+        # either dimensions
+        # https://github.com/albumentations-team/albumentations/issues/459
+        annotations[:, 2] = np.clip(
+            annotations[:, 0] + annotations[:, 2], 1, self.image_size[0] - 1
+        )
+        annotations[:, 3] = np.clip(
+            annotations[:, 1] + annotations[:, 3], 1, self.image_size[1] - 1
+        )
+        annotations[:, 0] = np.clip(annotations[:, 0], 1, self.image_size[0] - 1)
+        annotations[:, 1] = np.clip(annotations[:, 1], 1, self.image_size[1] - 1)
 
         return annotations
 
@@ -154,7 +169,10 @@ class CocoDataset(Dataset):
 
         sample["img"] = torch.from_numpy(sample["img"].astype(np.float32))
         sample["annot"] = torch.from_numpy(sample["annot"].astype(np.float32))
-        return sample
+        gt_boxes, gt_cls = get_anchor_labels(
+            self.anchors, sample["annot"][:, :4], sample["annot"][:, 4]
+        )
+        return sample["img"].permute(2, 0, 1).contiguous(), gt_boxes, gt_cls
 
     def _coco_label_to_label(self, coco_label):
         return self.coco_labels_inverse[coco_label]

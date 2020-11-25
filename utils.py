@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 from typing import Any, Union, Optional, Tuple
 
+import cv2
+import numpy as np
 import torch
 import torchvision
 

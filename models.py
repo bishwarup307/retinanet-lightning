@@ -4,10 +4,13 @@ Created: 22/11/20
 """
 from typing import List, Optional, Tuple
 
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision
-import pytorch_lightning as pl
+
+from losses import FocalLoss
 
 
 class RetinaNet(pl.LightningModule):
@@ -48,6 +51,10 @@ class RetinaNet(pl.LightningModule):
         if backbone_freeze_bn:
             self.backbone.freeze_bn()
 
+        self.classification_loss = FocalLoss(
+            alpha=focal_loss_alpha, gamma=focal_loss_gamma
+        )
+
     def forward(self, t: torch.Tensor):
         features = self.backbone(t)
         pyramids = self.fpn(*features)
@@ -65,6 +72,28 @@ class RetinaNet(pl.LightningModule):
             logits.append(cls_pred)
             offsets.append(reg_pred)
         return torch.cat(logits, dim=1), torch.cat(offsets, dim=1)
+
+    def training_step(self, batch, batch_idx):
+        img, gt_boxes, gt_cls = batch
+        logits, offsets = self(img)
+
+        # calculate classification loss
+        mask = gt_cls > -1
+        masked_gt = gt_cls[mask]
+        masked_logits = logits[mask]
+        masked_target_one_hot = F.one_hot(
+            masked_gt.long(), num_classes=self.num_classes + 1  # +1 for background
+        ).float()
+        cls_loss = self.classification_loss(masked_logits, masked_target_one_hot[:, 1:])
+
+        # calculate regression loss
+        mask = gt_cls > 0
+        masked_gt = gt_boxes[mask]
+        masked_offsets = offsets[mask]
+        reg_loss = F.smooth_l1_loss(masked_offsets, masked_gt, reduction="mean")
+
+        loss = cls_loss + reg_loss
+        return {"loss": loss}
 
 
 class RetineNetHead(nn.Module):
