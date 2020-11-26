@@ -9,7 +9,7 @@ import numpy as np
 import albumentations as A
 import torch
 
-from utils import ifnone
+from retinanet.utils import ifnone
 
 
 class Resizer:

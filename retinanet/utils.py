@@ -7,8 +7,6 @@ import os
 from pathlib import Path
 from typing import Any, Union, Optional, Tuple
 
-import cv2
-import numpy as np
 import torch
 import torchvision
 
@@ -92,7 +90,7 @@ def bbox_iou(
     ), "expects bboxes to be in the format `(xmin, ymin, xmax, ymax)` at position 0"
     assert _is_xyxy(
         boxes2
-    ), "expects bboxes to be in the format `(xmin, ymin, xmax, ymax)` at position 1"
+    ), f"expects bboxes to be in the format `(xmin, ymin, xmax, ymax)` at position 1 \n {boxes2}"
 
     # intersection = min(max(coordinate)) - max(min(coordinate))
     iw = torch.min(boxes1[:, None, 2], boxes2[:, 2]) - torch.max(

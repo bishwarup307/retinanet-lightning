@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from utils import ifnone, to_tensor
+from retinanet.utils import ifnone, to_tensor
 
 
 class Defaults:

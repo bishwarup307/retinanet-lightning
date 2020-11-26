@@ -12,9 +12,9 @@ from PIL import Image
 from pycocotools.coco import COCO
 from torch.utils.data import Dataset
 
-from anchors import MultiBoxPrior
-from augments import Resizer, Augmenter, Normalizer
-from utils import get_anchor_labels
+from retinanet.anchors import MultiBoxPrior
+from retinanet.augments import Resizer, Augmenter, Normalizer
+from retinanet.utils import get_anchor_labels
 
 
 class CocoDataset(Dataset):
@@ -45,11 +45,10 @@ class CocoDataset(Dataset):
             self.normalize_mean = normalize["mean"]
             self.normalize_std = normalize["std"]
         except TypeError:
-            self.normalize_mean, self.normalize_std = [0.485, 0.456, 0.406], [
-                0.229,
-                0.224,
-                0.225,
-            ]
+            self.normalize_mean, self.normalize_std = (
+                [0.485, 0.456, 0.406],
+                [0.229, 0.224, 0.225,],
+            )
 
         self.coco = COCO(json_path)
         self.image_ids = self.coco.getImgIds()
@@ -71,6 +70,16 @@ class CocoDataset(Dataset):
     def __len__(self):
         return len(self.image_ids)
 
+    def _clip_annotations(self, sample):
+        # albumentation complains if bbox coordinates are equal to image shape in
+        # either dimensions
+        # https://github.com/albumentations-team/albumentations/issues/459
+        annots = sample["annot"]
+        annots[:, 0:4:2] = annots[:, 0:4:2].clip(1, self.image_size[0])
+        annots[:, 1:4:2] = annots[:, 1:4:2].clip(1, self.image_size[1])
+        sample["annot"] = annots
+        return sample
+
     def __getitem__(self, idx):
 
         img = self._load_image(idx, normalize=False)  # load image
@@ -79,6 +88,8 @@ class CocoDataset(Dataset):
         if self.image_size is not None:
             resize = Resizer(self.image_size)  # resize
             sample = resize(sample)
+
+        sample = self._clip_annotations(sample)
 
         if self.transform is not None:
             augment = Augmenter(self.transform)
@@ -150,17 +161,8 @@ class CocoDataset(Dataset):
             annotation[0, 4] = self._coco_label_to_label(a["category_id"])
             annotations = np.append(annotations, annotation, axis=0)
 
-        # albumentation complains if bbox coordinates are equal to image shape in
-        # either dimensions
-        # https://github.com/albumentations-team/albumentations/issues/459
-        annotations[:, 2] = np.clip(
-            annotations[:, 0] + annotations[:, 2], 1, self.image_size[0] - 1
-        )
-        annotations[:, 3] = np.clip(
-            annotations[:, 1] + annotations[:, 3], 1, self.image_size[1] - 1
-        )
-        annotations[:, 0] = np.clip(annotations[:, 0], 1, self.image_size[0] - 1)
-        annotations[:, 1] = np.clip(annotations[:, 1], 1, self.image_size[1] - 1)
+        annotations[:, 2] = annotations[:, 0] + annotations[:, 2]
+        annotations[:, 3] = annotations[:, 1] + annotations[:, 3]
 
         return annotations
 

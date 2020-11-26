@@ -9,8 +9,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+from torch.utils.data import DataLoader
 
-from losses import FocalLoss
+from retinanet.datasets import CocoDataset
+from retinanet.losses import FocalLoss
 
 
 class RetinaNet(pl.LightningModule):
@@ -51,8 +53,9 @@ class RetinaNet(pl.LightningModule):
         if backbone_freeze_bn:
             self.backbone.freeze_bn()
 
+        # self.classification_loss = nn.BCEWithLogitsLoss()
         self.classification_loss = FocalLoss(
-            alpha=focal_loss_alpha, gamma=focal_loss_gamma, reduction="mean"
+            alpha=focal_loss_alpha, gamma=focal_loss_gamma, reduction="sum"
         )
 
     def forward(self, t: torch.Tensor):
@@ -77,6 +80,8 @@ class RetinaNet(pl.LightningModule):
         img, gt_boxes, gt_cls = batch
         logits, offsets = self(img)
 
+        num_pos = (gt_cls > 0).sum()
+
         # calculate classification loss
         mask = gt_cls > -1
         masked_gt = gt_cls[mask]
@@ -86,16 +91,36 @@ class RetinaNet(pl.LightningModule):
         ).float()
         # background class is not used for loss calculation
         # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
-        cls_loss = self.classification_loss(masked_logits, masked_target_one_hot[:, 1:])
+        cls_loss = (
+            self.classification_loss(masked_logits, masked_target_one_hot[:, 1:])
+            / num_pos
+        )
 
         # calculate regression loss
         mask = gt_cls > 0
         masked_gt = gt_boxes[mask]
         masked_offsets = offsets[mask]
-        reg_loss = F.smooth_l1_loss(masked_offsets, masked_gt, reduction="mean")
+        reg_loss = (
+            F.smooth_l1_loss(masked_offsets, masked_gt, reduction="sum") / num_pos
+        )
 
         loss = cls_loss + reg_loss
         return {"loss": loss}
+
+    def configure_optimizers(self,):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
+        return optimizer
+
+    def train_dataloader(self):
+        dataset = CocoDataset(
+            image_dir="/home/bishwarup/EV/v0.2.2/data/images",
+            json_path="/home/bishwarup/EV/v0.2.2/data/annotations/train_non_empty.json",
+            image_size=(512, 512),
+        )
+        train_loader = DataLoader(
+            dataset, batch_size=16, num_workers=8, pin_memory=True
+        )
+        return train_loader
 
 
 class RetineNetHead(nn.Module):
