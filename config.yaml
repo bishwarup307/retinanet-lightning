@@ -1,5 +1,5 @@
 Dataset:
-  type: coco
+  dataset: coco
   root: "/mydataset"
   train:
     images: "images"
