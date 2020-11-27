@@ -2,7 +2,7 @@
 __author__: bishwarup307
 Created: 22/11/20
 """
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union, Any
 
 import pytorch_lightning as pl
 import torch
@@ -20,15 +20,16 @@ class RetinaNet(pl.LightningModule):
         self,
         backbone: str,
         num_classes: int,
-        channels: Optional[int] = 256,
-        num_priors: Optional[int] = 9,
-        fpn_upsample: Optional[str] = "bilinear",
-        head_num_repeats: Optional[int] = 4,
-        head_activation: Optional[str] = "relu",
-        head_use_bn: Optional[bool] = False,
-        backbone_freeze_bn: Optional[bool] = True,
-        focal_loss_alpha: Optional[float] = 0.25,
-        focal_loss_gamma: Optional[float] = 2.0,
+        channels: int = 256,
+        num_priors: int = 9,
+        fpn_upsample: str = "bilinear",
+        head_num_repeats: int = 4,
+        head_activation: str = "relu",
+        head_use_bn: bool = False,
+        backbone_freeze_bn: bool = True,
+        focal_loss_alpha: float = 0.25,
+        focal_loss_gamma: float = 2.0,
+        l1_loss_beta: float = 0.1,
     ):
         super(RetinaNet, self).__init__()
         self.backbone = _get_backbone(backbone)
@@ -57,6 +58,38 @@ class RetinaNet(pl.LightningModule):
         self.classification_loss = FocalLoss(
             alpha=focal_loss_alpha, gamma=focal_loss_gamma, reduction="sum"
         )
+        self.regression_loss = nn.SmoothL1Loss(reduction="mean", beta=l1_loss_beta)
+        self.save_hyperparameters()
+
+    def _forward_classification_head(
+        self, logits: torch.Tensor, gt_cls: torch.Tensor
+    ) -> torch.Tensor:
+        num_pos = (gt_cls > 0).sum()
+        mask = gt_cls > -1
+        masked_gt = gt_cls[mask]
+        masked_logits = logits[mask]
+        masked_target_one_hot = F.one_hot(
+            masked_gt.long(), num_classes=self.num_classes + 1  # +1 for background
+        ).float()
+        # background class is not used for loss calculation
+        # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
+        cls_loss = (
+            self.classification_loss(masked_logits, masked_target_one_hot[:, 1:])
+            / num_pos
+        )
+        return cls_loss
+
+    def _forward_regression_head(
+        self,
+        pred_box_offsets: torch.Tensor,
+        gt_box_offsets: torch.Tensor,
+        gt_cls: torch.Tensor,
+    ) -> torch.Tensor:
+        mask = gt_cls > 0
+        masked_gt = gt_box_offsets[mask]
+        masked_offsets = pred_box_offsets[mask]
+        reg_loss = self.regression_loss(masked_offsets, masked_gt)
+        return reg_loss
 
     def forward(self, t: torch.Tensor):
         features = self.backbone(t)
@@ -80,32 +113,37 @@ class RetinaNet(pl.LightningModule):
         img, gt_boxes, gt_cls = batch
         logits, offsets = self(img)
 
-        num_pos = (gt_cls > 0).sum()
-
         # calculate classification loss
-        mask = gt_cls > -1
-        masked_gt = gt_cls[mask]
-        masked_logits = logits[mask]
-        masked_target_one_hot = F.one_hot(
-            masked_gt.long(), num_classes=self.num_classes + 1  # +1 for background
-        ).float()
-        # background class is not used for loss calculation
-        # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
-        cls_loss = (
-            self.classification_loss(masked_logits, masked_target_one_hot[:, 1:])
-            / num_pos
-        )
-
+        cls_loss = self._forward_classification_head(logits, gt_cls)
         # calculate regression loss
-        mask = gt_cls > 0
-        masked_gt = gt_boxes[mask]
-        masked_offsets = offsets[mask]
-        reg_loss = (
-            F.smooth_l1_loss(masked_offsets, masked_gt, reduction="sum") / num_pos
-        )
+        reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
 
         loss = cls_loss + reg_loss
+
+        self.log("train/cls_loss", cls_loss, prog_bar=True)
+        self.log("train/reg_loss", reg_loss, prog_bar=True)
         return {"loss": loss}
+
+    def validation_step(self, batch, batch_idx):
+        img, gt_boxes, gt_cls = batch
+        logits, offsets = self(img)
+
+        cls_loss = self._forward_classification_head(logits, gt_cls)
+        reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
+        val_loss = cls_loss + reg_loss
+        return {
+            "val_loss": val_loss,
+            "val_cls_loss": cls_loss,
+            "val_reg_loss": reg_loss,
+        }
+
+    def validation_epoch_end(self, outputs: List[Any]) -> None:
+        avg_cls_loss = torch.stack([x["val_cls_loss"] for x in outputs]).mean()
+        avg_reg_loss = torch.stack([x["val_reg_loss"] for x in outputs]).mean()
+        val_loss = avg_cls_loss + avg_reg_loss
+        self.log("val/cls_loss", avg_cls_loss)
+        self.log("val/reg_loss", avg_reg_loss)
+        self.log("val_loss", val_loss)
 
     def configure_optimizers(self,):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
@@ -121,6 +159,15 @@ class RetinaNet(pl.LightningModule):
             dataset, batch_size=16, num_workers=8, pin_memory=True
         )
         return train_loader
+
+    def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
+        dataset = CocoDataset(
+            image_dir="/home/bishwarup/EV/v0.2.2/data/images",
+            json_path="/home/bishwarup/EV/v0.2.2/data/annotations/val_non_empty.json",
+            image_size=(512, 512),
+        )
+        val_loader = DataLoader(dataset, batch_size=16, num_workers=8, pin_memory=True)
+        return val_loader
 
 
 class RetineNetHead(nn.Module):

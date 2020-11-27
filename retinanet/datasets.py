@@ -3,7 +3,7 @@ __author__: bishwarup307
 Created: 23/11/20
 """
 import os
-from typing import Optional, Dict, Tuple
+from typing import Optional, Dict, Tuple, List
 
 import cv2
 import numpy as np
@@ -96,7 +96,8 @@ class CocoDataset(Dataset):
             sample = augment(sample)
 
         if self.return_ids:
-            return self._to_tensor(sample), self.image_ids[idx]
+            # return self._to_tensor(sample), self.image_ids[idx]
+            sample["image_id"] = self.image_ids[idx]
 
         return self._to_tensor(sample)
 
@@ -182,3 +183,23 @@ class CocoDataset(Dataset):
 
     def _coco_label_to_label(self, coco_label):
         return self.coco_labels_inverse[coco_label]
+
+
+def list_collate(batch: List):
+    image_ids, images, labels, scales, offset_x, offset_y = [], [], [], [], [], []
+
+    for instance in batch:
+        images.append(instance["img"])
+        labels.append(instance["annot"])
+        scales.append(instance["scale"])
+        offset_x.append(instance["offset_x"])
+        offset_y.append(instance["offset_y"])
+        image_ids.append(instance["image_id"])
+    return (
+        torch.stack(images).permute(0, 3, 1, 2).contiguous(),
+        labels,
+        scales,
+        offset_x,
+        offset_y,
+        image_ids,
+    )
