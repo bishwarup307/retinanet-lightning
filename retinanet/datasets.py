@@ -36,8 +36,8 @@ class DataModule(pl.LightningDataModule):
             )
             raise NotImplementedError
         self.cfg = cfg
-        self.image_dir = Path(cfg.Datsaet.root_dir) / "images"
-        self.annotatio_dir = Path(cfg.Dataset.root_dir) / "annotations"
+        self.image_dir = Path(cfg.Dataset.root) / "images"
+        self.annotatio_dir = Path(cfg.Dataset.root) / "annotations"
         self.image_size = cfg.Dataset.image_size[:2]
 
         self.train_name = train_name
