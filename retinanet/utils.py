@@ -17,7 +17,9 @@ def ifnone(x: Any, y: Any):
 
 
 def isfile(path: Union[str, os.PathLike]):
-    return Path(path).is_file()
+    if Path(path).is_file():
+        return path
+    return None
 
 
 def ifdir(path: Union[str, os.PathLike], alt_path: Union[str, os.PathLike]):

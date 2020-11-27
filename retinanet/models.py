@@ -168,7 +168,9 @@ class RetinaNet(pl.LightningModule):
         self.log("val/reg_loss", avg_reg_loss)
         self.log("val_loss", val_loss)
 
-    def configure_optimizers(self,):
+    def configure_optimizers(
+        self,
+    ):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
         return optimizer
 

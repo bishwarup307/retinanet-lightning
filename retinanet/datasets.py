@@ -3,18 +3,132 @@ __author__: bishwarup307
 Created: 23/11/20
 """
 import os
-from typing import Optional, Dict, Tuple, List
+from pathlib import Path
+from typing import Optional, Dict, Tuple, List, Union
 
 import cv2
 import numpy as np
 import torch
 from PIL import Image
 from pycocotools.coco import COCO
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 
 from retinanet.anchors import MultiBoxPrior
 from retinanet.augments import Resizer, Augmenter, Normalizer
-from retinanet.utils import get_anchor_labels
+from retinanet.utils import get_anchor_labels, isfile
+
+import pytorch_lightning as pl
+from omegaconf import DictConfig
+
+
+class DataModule(pl.LightningDataModule):
+    def __init__(
+        self,
+        cfg: DictConfig,
+        train_name: str = "train",
+        val_name: str = "val",
+        test_name: str = "test",
+    ):
+        super(DataModule, self).__init__()
+        if cfg.Dataset.dataset != "coco":
+            print(
+                f"only COCO dataset is supported at present, got {cfg.Dataset.dataset}"
+            )
+            raise NotImplementedError
+        self.cfg = cfg
+        self.image_dir = Path(cfg.Datsaet.root_dir) / "images"
+        self.annotatio_dir = Path(cfg.Dataset.root_dir) / "annotations"
+        self.image_size = cfg.Dataset.image_size[:2]
+
+        self.train_name = train_name
+        self.val_name = val_name
+        self.test_name = test_name
+        self.label_ext = "json" if cfg.Dataset.dataset == "coco" else None
+        self._register_paths()
+        if self.train_label_path is None:
+            raise IOError(
+                f"Could not load {self.train_label_path}, no such file on disk."
+            )
+
+    def _register_paths(self):
+        if self.image_dir.joinpath("train").is_dir():
+            self.train_image_dir = self.image_dir.joinpath("train")
+            if self.image_dir.joinpath("val").is_dir():
+                self.val_image_dir = self.image_dir.joinpath("val")
+            if self.image_dir.joinpath("test").is_dir():
+                self.test_image_dir = self.image_dir.joinpath("test")
+        else:
+            self.train_image_dir = self.image_dir
+            self.val_image_dir = self.image_dir
+            self.test_image_dir = self.image_dir
+
+        self.train_label_path = isfile(
+            self.annotatio_dir.joinpath(f"{self.train_name}.{self.label_ext}")
+        )
+        self.val_label_path = isfile(
+            self.annotatio_dir.joinpath(f"{self.val_name}.{self.label_ext}")
+        )
+        self.test_label_path = isfile(
+            self.annotatio_dir.joinpath(f"{self.test_name}.{self.label_ext}")
+        )
+
+    def setup(self, stage: Optional[str] = None):
+        if stage == "fit" or stage is None:
+            self.train_dataset = CocoDataset(
+                image_dir=self.train_image_dir,
+                json_path=self.train_label_path,
+                image_size=self.image_size,
+            )
+            self.num_classes = len(self.train_dataset.coco.getCatIds())
+            self.anchors = self.train_dataset.anchors
+
+            if self.val_label_path is not None:
+                self.val_dataset = CocoDataset(
+                    image_dir=self.val_image_dir,
+                    json_path=self.val_label_path,
+                    image_size=self.image_size,
+                    train=False,
+                )
+            else:
+                self.val_dataset = None
+
+        if stage == "test" or stage is None:
+            if self.test_label_path is not None:
+                self.test_dataset = CocoDataset(
+                    image_dir=self.test_image_dir,
+                    json_path=self.test_label_path,
+                    image_size=self.image_size,
+                    train=False,
+                )
+            else:
+                self.test_dataset = None
+
+    def train_dataloader(self, *args, **kwargs) -> DataLoader:
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.cfg.Trainer.batch_size.train,
+            num_workers=self.cfg.Trainer.workers,
+            pin_memory=self.cfg.Trainer.gpu and self.cfg.Trainer.n_gpus > 0,
+            shuffle=True,
+        )
+
+    def val_dataloader(self, *args, **kwargs) -> Union[DataLoader, List[DataLoader]]:
+        if self.val_dataset is not None:
+            return DataLoader(
+                self.val_dataset,
+                batch_size=self.cfg.Trainer.batch_size.val,
+                num_workers=self.cfg.Trainer.workers,
+                pin_memory=self.cfg.Trainer.gpu and self.cfg.Trainer.n_gpus > 0,
+            )
+
+    def test_dataloader(self, *args, **kwargs) -> Union[DataLoader, List[DataLoader]]:
+        if self.test_dataset is not None:
+            return DataLoader(
+                self.test_dataset,
+                batch_size=self.cfg.Trainer.batch_size.test,
+                num_workers=self.cfg.Trainer.workers,
+                pin_memory=self.cfg.Trainer.gpu and self.cfg.Trainer.n_gpus > 0,
+            )
 
 
 class CocoDataset(Dataset):
@@ -47,7 +161,11 @@ class CocoDataset(Dataset):
         except TypeError:
             self.normalize_mean, self.normalize_std = (
                 [0.485, 0.456, 0.406],
-                [0.229, 0.224, 0.225,],
+                [
+                    0.229,
+                    0.224,
+                    0.225,
+                ],
             )
 
         self.coco = COCO(json_path)
