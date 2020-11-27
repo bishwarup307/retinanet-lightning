@@ -17,6 +17,7 @@ class Defaults:
     ratios = [0.5, 1.0, 2.0]
     sizes = [32, 64, 128, 256, 512]
     strides = [8, 16, 32, 64, 128]  # resnet strides + two additional downsamples
+    prior_variance = [0.1, 0.1, 0.2, 0.2]
 
 
 class MultiBoxPrior(nn.Module):

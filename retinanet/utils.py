@@ -153,6 +153,9 @@ def get_anchor_labels(
 
     target_boxes = gt_boxes[max_idx]
     target_boxes = _calculate_offsets(anchors, target_boxes)
+    target_boxes = (
+        target_boxes / torch.tensor([0.1, 0.1, 0.2, 0.2]).float()
+    )  # scale with prior variance
 
     target_classes = 1 + gt_cls[max_idx]
     target_classes[max_iou <= neg_threshold] = 0.0
@@ -166,7 +169,7 @@ def batched_nms(
     logits: torch.Tensor,
     boxes: torch.Tensor,
     conf_threshold: Optional[float] = 0.05,
-    nms_threshold: Optional[float] = 0.4,
+    nms_threshold: Optional[float] = 0.5,
 ):
     """
     Performs non-max suppression (NMS) on each batch level. This is done using torchvision`batched_nms` method.
