@@ -1,0 +1,69 @@
+Dataset:
+  type: coco
+  root: "/mydataset"
+  train:
+    images: "images"
+    annotations: "annotations/train.json"
+  val:
+    images: "images"
+    annotations: "annotations/val.json"
+  test:
+    images: "images"
+    annotations: "annotations/test.json"
+  image_size: [512, 512, 3]
+Model:
+  backnone: 
+    name: "resnet_34"
+    pretrained: True
+    freeze_bn: True
+  anchors:
+    scales: [1, 1.2599210498948732, 1.5874010519681994]
+    ratios: [0.5, 1, 2]
+    sizes: [32, 64, 128, 256, 512]
+    strides: [8, 16, 32, 64, 128]
+    mean: [0, 0, 0, 0]
+    std: [0.1, 0.1, 0.2, 0.2]
+  FPN:
+    pyramid_levels: [3, 4, 5, 6, 7]
+    channels: 256
+    upsample: "bilinear"
+  head:
+    classification:
+      num_classes: 1
+      n_repeat: 4
+      loss:
+        name: "focalloss"
+        params:
+          alpha: 0.25
+          gamma: 2.0
+    regression:
+      n_repeat: 4
+      loss:
+        name: "smooth_l1_loss"
+        params:
+          beta: 0.1
+Trainer:
+  num_epochs: 100
+  batch_size:
+    train: 8
+    val: 8
+    test: 8
+  optimizer:
+    name: torch.optim.Adam
+    params:
+      lr: 1e-4
+      betas: (0.9, 0.999)
+      weight_decay: 1e-6
+  scheduler:
+    name: "torch.optim.lr_scheduler.OneCycleLR"
+    params:
+      max_lr: ${Trainer.optimizer.params.lr}
+      schedule: 'cosine'
+      epochs: ${Trainer.num_epochs}
+      warmup_steps: 0
+      final_lr: 0
+  gpu: True
+  n_gpus: 1
+  workers: 4
+
+
