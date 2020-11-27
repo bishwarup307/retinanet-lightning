@@ -147,22 +147,27 @@ def get_anchor_labels(
     Returns:
 
     """
-    ious = bbox_iou(anchors, gt_boxes)
-    max_iou, max_idx = ious.max(dim=1)
+    if len(gt_boxes) == 0:
+        target_boxes = torch.zeros_like(anchors)
+        target_classes = torch.zeros(len(anchors))
+    
+    else:
+        ious = bbox_iou(anchors, gt_boxes)
+        max_iou, max_idx = ious.max(dim=1)
 
-    gt_boxes = xyxy_to_ccwh(gt_boxes)
-    anchors = xyxy_to_ccwh(anchors)
+        gt_boxes = xyxy_to_ccwh(gt_boxes)
+        anchors = xyxy_to_ccwh(anchors)
 
-    target_boxes = gt_boxes[max_idx]
-    target_boxes = _calculate_offsets(anchors, target_boxes)
-    target_boxes = (
-        target_boxes / torch.tensor([0.1, 0.1, 0.2, 0.2]).float()
-    )  # scale with prior variance
+        target_boxes = gt_boxes[max_idx]
+        target_boxes = _calculate_offsets(anchors, target_boxes)
+        target_boxes = (
+            target_boxes / torch.tensor([0.1, 0.1, 0.2, 0.2]).float()
+        )  # scale with prior variance
 
-    target_classes = 1 + gt_cls[max_idx]
-    target_classes[max_iou <= neg_threshold] = 0.0
-    null_indices = (max_iou > neg_threshold) & (max_iou < pos_threshold)
-    target_classes[null_indices] = ignore_index
+        target_classes = 1 + gt_cls[max_idx]
+        target_classes[max_iou <= neg_threshold] = 0.0
+        null_indices = (max_iou > neg_threshold) & (max_iou < pos_threshold)
+        target_classes[null_indices] = ignore_index
 
     return target_boxes, target_classes
 
