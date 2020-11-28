@@ -12,11 +12,17 @@ import torchvision
 
 
 def ifnone(x: Any, y: Any):
+    """
+    returns x if x is none else returns y
+    """
     val = x if x is not None else y
     return val
 
 
 def isfile(path: Union[str, os.PathLike]):
+    """
+    returns tha path provided as argument if the file exists. Returns `None` if not.
+    """
     if Path(path).is_file():
         return path
     return None
@@ -116,6 +122,28 @@ def bbox_iou(
 
 
 def _calculate_offsets(anchors: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+    """Calculate offsets for bounding box regression. Offsets are calculated following the
+    equations below:
+    ..math:
+
+            x'' = \frac{x'}{\sigma_{x}^{2}} = \frac{x_{gt} - x_{anchor}}{w_{anchor}} / \sigma_{X'}
+
+            y'' = \frac{y'}{\sigma_{y}^{2}} = \frac{y_{gt} - y_{anchor}}{h_{anchor}} / \sigma_{Y'}
+
+            w'' = \frac{w'}{\sigma_{w}^{2}} = \ln \left[ \frac{w_{gt}}{w_{anchor}} \right] / \sigma_{W'}
+
+            h'' = \frac{h'}{\sigma_{h}^{2}} = \ln \left[ \frac{h_{gt}}{h_{anchor}} \right] / \sigma_{H'}
+    Args:
+        anchors (torch.Tensor): anchor boxes (priors). Shape `(A, 4)`. the boxes must be in
+        :math:`(x_{center}, y_{center}, width, height)` format.
+        targets (torch.Tensor): ground truth boxes. Shape `(A, 4)`. the boxes must be in
+        :math:`(x_{center}, y_{center}, width, height)` format.
+
+    Returns:
+        (torch.Tensor): the calculated offsets (deltas) for :math:`(x_{center}, y_{center}, width, height)`.
+        Shape `(A, 4)`
+
+    """
     targets[:, :2] = (targets[:, :2] - anchors[:, :2]) / anchors[:, 2:]
     targets[:, 2:] = torch.log(targets[:, 2:] / anchors[:, 2:])
     return targets
@@ -149,8 +177,10 @@ def get_anchor_labels(
     """
     if len(gt_boxes) == 0:
         target_boxes = torch.zeros_like(anchors)
-        target_classes = torch.zeros(len(anchors))
-    
+        target_classes = torch.zeros(
+            len(anchors)
+        )  # all anchors are assigned to background
+
     else:
         ious = bbox_iou(anchors, gt_boxes)
         max_iou, max_idx = ious.max(dim=1)
@@ -202,7 +232,10 @@ def batched_nms(
         nms_threshold (Optional[float]): IoU threshold for NMS. Defaults to 0.4.
 
     Returns:
-
+        nms_image_idx (torch.Tensor): the location index of the image in the given batch. Shape `(N,)`
+        nms_boxes (torch.Tensor): the boxes after NMS. Shape `(P, 4)` where P is the number of boxes after NMS
+        nms_classes (torch.Tensor) : the class indices for the `nms_boxes`. Shape `(N,)`
+        nms_scores (torch.Tensor): the confidence score for the `nms_boxes`. Shape `(N, )`
     """
 
     num_classes = logits.size(-1)

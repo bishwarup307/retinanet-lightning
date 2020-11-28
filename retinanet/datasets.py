@@ -4,7 +4,7 @@ Created: 23/11/20
 """
 import os
 from pathlib import Path
-from typing import Optional, Dict, Tuple, List, Union
+from typing import Optional, Dict, Tuple, List, Union, Callable
 
 import cv2
 import numpy as np
@@ -37,7 +37,7 @@ class DataModule(pl.LightningDataModule):
             raise NotImplementedError
         self.cfg = cfg
         self.image_dir = Path(cfg.Dataset.root) / "images"
-        self.annotatio_dir = Path(cfg.Dataset.root) / "annotations"
+        self.annotation_dir = Path(cfg.Dataset.root) / "annotations"
         self.image_size = cfg.Dataset.image_size[:2]
 
         self.train_name = train_name
@@ -63,13 +63,13 @@ class DataModule(pl.LightningDataModule):
             self.test_image_dir = self.image_dir
 
         self.train_label_path = isfile(
-            self.annotatio_dir.joinpath(f"{self.train_name}.{self.label_ext}")
+            self.annotation_dir.joinpath(f"{self.train_name}.{self.label_ext}")
         )
         self.val_label_path = isfile(
-            self.annotatio_dir.joinpath(f"{self.val_name}.{self.label_ext}")
+            self.annotation_dir.joinpath(f"{self.val_name}.{self.label_ext}")
         )
         self.test_label_path = isfile(
-            self.annotatio_dir.joinpath(f"{self.test_name}.{self.label_ext}")
+            self.annotation_dir.joinpath(f"{self.test_name}.{self.label_ext}")
         )
 
     def setup(self, stage: Optional[str] = None):
@@ -132,7 +132,19 @@ class DataModule(pl.LightningDataModule):
 
 
 class CocoDataset(Dataset):
-    """Coco dataset."""
+    """
+    Creates a `torch.utils.Dataset` object from COCO annotations.
+
+    Args:
+        image_dir (str): Path to the images
+        json_path (str): Path to the coco json file
+        image_size Tuple[int, int]: image width and height as required by the model. Required for resizing images
+        normalize (Optional[Dict[str, List[float]): normalization factors for the image channels
+        transform (Optional[List[Callable]]): a list of transforms
+        train (bool): whether the dataset is used for training or validation/inference
+        nsr (float): negative sampling rate at batch level
+
+    """
 
     def __init__(
         self,
@@ -140,16 +152,11 @@ class CocoDataset(Dataset):
         json_path: str,
         image_size: Tuple[int, int],
         normalize: Optional[Dict] = None,
-        transform: Optional[Dict] = None,
+        transform: Optional[List[Callable]] = None,
         train: bool = True,
         nsr: float = None,
     ):
-        """
-        Args:
-            image_dir (string): COCO directory.
-            transform (callable, optional): Optional transform to be applied
-                on a sample.
-        """
+
         self.image_dir = image_dir
         self.transform = transform
         self.image_size = image_size

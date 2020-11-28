@@ -521,6 +521,14 @@ class OffsetsToBBox(nn.Module):
         mean: Optional[Sequence[float]] = None,
         std: Optional[Sequence[float]] = None,
     ):
+        """
+        Transforms the predicted offsets (deltas) from the model to bounding box coordinates.
+        Args:
+            mean: prior mean. Defaults to [0, 0, 0, 0] for
+            :math:`(offset_{x_{center}}, offset_{y_{center}}, offset_{width}, offset_{height})`
+            std: prior variance. Defaults to [0.1, 0.1, 0.2, 0.2] for
+            :math:`(offset_{x_{center}}, offset_{y_{center}}, offset_{width}, offset_{height})`
+        """
         super(OffsetsToBBox, self).__init__()
         self.mean = ifnone(
             mean,
@@ -538,6 +546,9 @@ class OffsetsToBBox(nn.Module):
         )
 
     def _clip_boxes(self, boxes, image_size: Sequence[int]):
+        """
+        clip bounding box coodinates between 0 and image width and height.
+        """
         boxes[..., 0::2] = torch.clamp(boxes[..., 0::2], min=0, max=image_size[0])
         boxes[..., 1::2] = torch.clamp(boxes[..., 1::2], min=0, max=image_size[1])
         return boxes

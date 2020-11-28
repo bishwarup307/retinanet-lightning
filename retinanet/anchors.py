@@ -36,6 +36,11 @@ class MultiBoxPrior(nn.Module):
         as described in the paper.
         ratios (Optional[Sequence[int]]): aspect ratios for the anchors. Defaults to [0.5, 1, 2] as
         described in the paper.
+
+    Examples:
+        >> m = MultiBoxPrior()
+        >> sample_input = torch.randn(4, 3, 256, 256)
+        >> anchors = m(sample_input)
     """
 
     def __init__(
