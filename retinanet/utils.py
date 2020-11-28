@@ -205,7 +205,7 @@ def get_anchor_labels(
 def batched_nms(
     logits: torch.Tensor,
     boxes: torch.Tensor,
-    conf_threshold: Optional[float] = 0.05,
+    conf_threshold: Optional[float] = 0.1,
     nms_threshold: Optional[float] = 0.5,
 ):
     """
@@ -239,16 +239,25 @@ def batched_nms(
     """
 
     num_classes = logits.size(-1)
-
+    # print(f"batched_nms >> num_classes: {num_classes}")
+    # print(logits.size())
     scores, class_indices = logits.max(dim=2)
+    # print(f"batched_nms >> max_score: {scores.max()}")
+    # print(f"batched_nms >> min_score: {scores.min()}")
     mask = scores > conf_threshold
     instances_per_image = mask.sum(dim=1)
 
     selected_class_indices = class_indices[mask]
-    image_ids = torch.arange(num_classes, num_classes + logits.size(0)).type_as(class_indices)
+    image_ids = torch.arange(num_classes, num_classes + logits.size(0)).type_as(
+        class_indices
+    )
     image_ids = torch.repeat_interleave(image_ids, instances_per_image)
     category_idx = image_ids * (selected_class_indices + 1)
     selected_bboxes = boxes[mask]
+
+    # print(selected_bboxes.size())
+    # print(category_idx.size())
+    # print(scores[mask].size())
 
     keep_indices = torchvision.ops.boxes.batched_nms(
         selected_bboxes, scores[mask], category_idx, nms_threshold

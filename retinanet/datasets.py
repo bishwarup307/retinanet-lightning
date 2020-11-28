@@ -87,7 +87,7 @@ class DataModule(pl.LightningDataModule):
                     image_dir=self.val_image_dir,
                     json_path=self.val_label_path,
                     image_size=self.image_size,
-                    train=True,
+                    train=False,
                 )
             else:
                 self.val_dataset = None
@@ -168,11 +168,7 @@ class CocoDataset(Dataset):
         except TypeError:
             self.normalize_mean, self.normalize_std = (
                 [0.485, 0.456, 0.406],
-                [
-                    0.229,
-                    0.224,
-                    0.225,
-                ],
+                [0.229, 0.224, 0.225,],
             )
 
         self.coco = COCO(json_path)
@@ -299,12 +295,21 @@ class CocoDataset(Dataset):
 
         sample["img"] = torch.from_numpy(sample["img"].astype(np.float32))
         sample["annot"] = torch.from_numpy(sample["annot"].astype(np.float32))
+        # if self.train:
+        gt_boxes, gt_cls = get_anchor_labels(
+            self.anchors, sample["annot"][:, :4], sample["annot"][:, 4]
+        )
         if self.train:
-            gt_boxes, gt_cls = get_anchor_labels(
-                self.anchors, sample["annot"][:, :4], sample["annot"][:, 4]
-            )
             return sample["img"].permute(2, 0, 1).contiguous(), gt_boxes, gt_cls
-        return sample
+        return (
+            sample["img"].permute(2, 0, 1).contiguous(),
+            gt_boxes,
+            gt_cls,
+            sample["scale"],
+            sample["offset_x"],
+            sample["offset_y"],
+            sample["image_id"]
+        )
 
     def _coco_label_to_label(self, coco_label):
         return self.coco_labels_inverse[coco_label]
