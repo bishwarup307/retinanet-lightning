@@ -87,7 +87,7 @@ class DataModule(pl.LightningDataModule):
                     image_dir=self.val_image_dir,
                     json_path=self.val_label_path,
                     image_size=self.image_size,
-                    train=False,
+                    train=True,
                 )
             else:
                 self.val_dataset = None

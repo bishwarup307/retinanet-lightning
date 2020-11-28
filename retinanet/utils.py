@@ -245,7 +245,7 @@ def batched_nms(
     instances_per_image = mask.sum(dim=1)
 
     selected_class_indices = class_indices[mask]
-    image_ids = torch.arange(num_classes, num_classes + logits.size(0))
+    image_ids = torch.arange(num_classes, num_classes + logits.size(0)).type_as(class_indices)
     image_ids = torch.repeat_interleave(image_ids, instances_per_image)
     category_idx = image_ids * (selected_class_indices + 1)
     selected_bboxes = boxes[mask]

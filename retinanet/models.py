@@ -34,6 +34,10 @@ class RetinaNet(pl.LightningModule):
         focal_loss_alpha: float = 0.25,
         focal_loss_gamma: float = 2.0,
         l1_loss_beta: float = 0.1,
+        image_size: Optional[Tuple[int, int]] = None,
+        anchors: Optional[torch.Tensor] = None,
+        prior_mean: Optional[List[float]] = None,
+        prior_std: Optional[List[float]] = None,
     ):
         super(RetinaNet, self).__init__()
         self.backbone = _get_backbone(backbone, pretrained=pretrained_backbone)
@@ -64,13 +68,34 @@ class RetinaNet(pl.LightningModule):
         )
         self.regression_loss = nn.SmoothL1Loss(reduction="mean", beta=l1_loss_beta)
         self.calculate_bbox = OffsetsToBBox()
-        self.anchors = None
-        self.image_size = None
-        self.save_hyperparameters()
+        self.anchors = nn.Parameter(anchors, requires_grad=False)
+        self.image_size = image_size
+
+        self.prior_mean = ifnone(
+            prior_mean,
+            # torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32))
+            nn.Parameter(
+                torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)),
+                requires_grad=False,
+            ),
+        )
+        self.prior_std = ifnone(
+            prior_std,
+            # torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32))
+            nn.Parameter(
+                torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)),
+                requires_grad=False,
+            ),
+        )
+
+        # TODO: save all hparams except anchors
+        # self.save_hyperparameters(self._hyperparams())
         # self._register_anchors()
 
     # def _register_anchors(self):
     #     self.priors =
+    # def _hyperparams(self, exclude = ['anchors']):
+    #     return {k: v for k, v in self.hparams.items() if k not in exclude}
 
     def _forward_classification_head(
         self, logits: torch.Tensor, gt_cls: torch.Tensor
@@ -90,10 +115,10 @@ class RetinaNet(pl.LightningModule):
         )
         return cls_loss
 
-    def on_train_start(self):
-        loader = self.train_dataloader()
-        self.anchors = loader.dataset.anchors
-        self.image_size = loader.dataset.image_size
+    # def on_train_start(self):
+    #     loader = self.train_dataloader()
+    #     self.anchors = loader.dataset.anchors
+    #     self.image_size = loader.dataset.image_size
 
     def _forward_regression_head(
         self,
@@ -148,7 +173,9 @@ class RetinaNet(pl.LightningModule):
         reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
         val_loss = cls_loss + reg_loss
 
-        pred_boxes = self.calculate_bbox(self.anchors, offsets, self.image_size)
+        pred_boxes = self.calculate_bbox(
+            self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
+        )
         nms_image_idx, nms_bboxes, nms_classes, nms_scores = batched_nms(
             logits, pred_boxes
         )
@@ -168,9 +195,7 @@ class RetinaNet(pl.LightningModule):
         self.log("val/reg_loss", avg_reg_loss)
         self.log("val_loss", val_loss)
 
-    def configure_optimizers(
-        self,
-    ):
+    def configure_optimizers(self,):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
         return optimizer
 
@@ -516,11 +541,7 @@ def _get_backbone(
 
 
 class OffsetsToBBox(nn.Module):
-    def __init__(
-        self,
-        mean: Optional[Sequence[float]] = None,
-        std: Optional[Sequence[float]] = None,
-    ):
+    def __init__(self):
         """
         Transforms the predicted offsets (deltas) from the model to bounding box coordinates.
         Args:
@@ -530,20 +551,22 @@ class OffsetsToBBox(nn.Module):
             :math:`(offset_{x_{center}}, offset_{y_{center}}, offset_{width}, offset_{height})`
         """
         super(OffsetsToBBox, self).__init__()
-        self.mean = ifnone(
-            mean,
-            nn.Parameter(
-                torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)),
-                requires_grad=False,
-            ),
-        )
-        self.std = ifnone(
-            std,
-            nn.Parameter(
-                torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)),
-                requires_grad=False,
-            ),
-        )
+        # self.mean = ifnone(
+        #     mean,
+        #     torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32))
+        #     # nn.Parameter(
+        #     #     torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)),
+        #     #     requires_grad=False,
+        #     # ),
+        # )
+        # self.std = ifnone(
+        #     std,
+        #     torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32))
+        #     # nn.Parameter(
+        #     #     torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)),
+        #     #     requires_grad=False,
+        #     # ),
+        # )
 
     def _clip_boxes(self, boxes, image_size: Sequence[int]):
         """
@@ -555,10 +578,15 @@ class OffsetsToBBox(nn.Module):
 
     @torch.no_grad()
     def forward(
-        self, anchors: torch.Tensor, offsets: torch.Tensor, image_size: Sequence[int]
+        self,
+        anchors: torch.Tensor,
+        offsets: torch.Tensor,
+        image_size: Sequence[int],
+        mean: torch.Tensor,
+        std: torch.Tensor,
     ) -> torch.Tensor:
         anchors = xyxy_to_ccwh(anchors)
-        offsets = offsets * self.std + self.mean
+        offsets = offsets * std + mean
 
         cc = offsets[..., :2]
         wh = offsets[..., 2:]
