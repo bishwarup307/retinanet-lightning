@@ -45,6 +45,8 @@ class RetinaNet(pl.LightningModule):
     ):
         super(RetinaNet, self).__init__()
         self.backbone = _get_backbone(backbone, pretrained=pretrained_backbone)
+        if not pretrained_backbone:
+            self.backbone.apply(init_weights)
         self.num_classes = num_classes
         fmap_sizes = _get_feature_depths(str(self.backbone))
         self.fpn = FPN(fmap_sizes, channels, fpn_upsample)
@@ -72,6 +74,7 @@ class RetinaNet(pl.LightningModule):
         )
         self.regression_loss = nn.SmoothL1Loss(reduction="mean", beta=l1_loss_beta)
         self.calculate_bbox = OffsetsToBBox()
+        self.nms = NMS()
         self.anchors = nn.Parameter(anchors, requires_grad=False)
         self.image_size = image_size
         self.coco_labels = coco_labels
@@ -224,7 +227,7 @@ class RetinaNet(pl.LightningModule):
         pred_boxes = self.calculate_bbox(
             self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
         )
-        nms_image_idx, nms_bboxes, nms_classes, nms_scores = batched_nms(
+        nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
             torch.sigmoid(logits), pred_boxes
         )
         # print(f"nms_out: {nms_image_idx}")
@@ -261,6 +264,8 @@ class RetinaNet(pl.LightningModule):
         self.log("val/cls_loss", avg_cls_loss)
         self.log("val/reg_loss", avg_reg_loss)
         self.log("val_loss", val_loss)
+        print(f"validation-loss (classif): {avg_cls_loss.item(): .4f}")
+        print(f"validation-loss (reg): {avg_reg_loss.item(): .4f}")
 
         # print(coco_results)
         coco_dt = self.val_coco_gt.loadRes(coco_results)
@@ -343,7 +348,7 @@ class ResNet(nn.Module):
         base = torchvision.models.__dict__[self.model_repr](pretrained=self.pretrained)
         self.layer0 = nn.Sequential(base.conv1, base.bn1, base.relu, base.maxpool)
         self.convs = nn.ModuleList([base.layer1, base.layer2, base.layer3, base.layer4])
-        self._init_weights()
+        # self._init_weights()
 
     def freeze_bn(self):
         for m in self.modules():
@@ -658,6 +663,16 @@ class OffsetsToBBox(nn.Module):
         boxes_ccwh = torch.cat([cc, wh], dim=2)
         boxes_xyxy = ccwh_to_xyxy(boxes_ccwh)
         return self._clip_boxes(boxes_xyxy, image_size)
+
+
+class NMS(nn.Module):
+    def __init__(self, conf_threshold: float = 0.1, nms_threshold: float = 0.5):
+        super(NMS, self).__init__()
+        self.conf_threshold = conf_threshold
+        self.nms_threshold = nms_threshold
+
+    def forward(self, logits: torch.Tensor, boxes: torch.Tensor):
+        return batched_nms(logits, boxes, self.conf_threshold, self.nms_threshold)
 
 
 def init_weights(m):
