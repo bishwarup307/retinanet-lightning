@@ -93,6 +93,10 @@ class RetinaNet(pl.LightningModule):
             ),
         )
 
+        self.fpn.apply(init_weights)
+        self.classification.apply(init_weights)
+        self.regression.apply(init_weights)
+
         # TODO: save all hparams except anchors
         # self.save_hyperparameters(self._hyperparams())
         # self._register_anchors()
@@ -265,7 +269,9 @@ class RetinaNet(pl.LightningModule):
         cocoEval.accumulate()
         cocoEval.summarize()
 
-    def configure_optimizers(self,):
+    def configure_optimizers(
+        self,
+    ):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
         return optimizer
 
@@ -338,20 +344,6 @@ class ResNet(nn.Module):
         self.layer0 = nn.Sequential(base.conv1, base.bn1, base.relu, base.maxpool)
         self.convs = nn.ModuleList([base.layer1, base.layer2, base.layer3, base.layer4])
         self._init_weights()
-
-    def _init_weights(self):
-        if not self.pretrained:
-            for m in self.modules():
-                if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
-                    torch.nn.init.kaiming_normal_(
-                        m.weight, mode="fan_in", nonlinearity="relu"
-                    )
-                    if m.bias is not None:
-                        torch.nn.init.constant_(m.bias, 0.0)
-                elif isinstance(m, nn.BatchNorm2d):
-                    m.weight.data.fill_(1.0)
-                    if m.bias is not None:
-                        m.bias.data.zero_()
 
     def freeze_bn(self):
         for m in self.modules():
@@ -551,7 +543,7 @@ class FPN(nn.Module):
         self.p5 = Conv_1x1(ch_c5, channels)
         self.p4 = UpsampleSkipBlock(channels, ch_c4, upsample)
         self.p3 = UpsampleSkipBlock(channels, ch_c3, upsample)
-        self.p6 = nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1)
+        self.p6 = nn.Conv2d(ch_c5, channels, kernel_size=3, stride=2, padding=1)
         self.p7 = nn.Sequential(
             nn.ReLU(), nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1)
         )
@@ -560,7 +552,7 @@ class FPN(nn.Module):
         P5 = self.p5(C5)
         P4 = self.p4(P5, C4)
         P3 = self.p3(P4, C3)
-        P6 = self.p6(P5)
+        P6 = self.p6(C5)
         P7 = self.p7(P6)
         return P3, P4, P5, P6, P7
 
@@ -666,6 +658,17 @@ class OffsetsToBBox(nn.Module):
         boxes_ccwh = torch.cat([cc, wh], dim=2)
         boxes_xyxy = ccwh_to_xyxy(boxes_ccwh)
         return self._clip_boxes(boxes_xyxy, image_size)
+
+
+def init_weights(m):
+    if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+        torch.nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+        if m.bias is not None:
+            torch.nn.init.constant_(m.bias, 0.0)
+    elif isinstance(m, nn.BatchNorm2d):
+        m.weight.data.fill_(1.0)
+        if m.bias is not None:
+            m.bias.data.zero_()
 
 
 if __name__ == "__main__":

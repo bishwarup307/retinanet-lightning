@@ -168,7 +168,11 @@ class CocoDataset(Dataset):
         except TypeError:
             self.normalize_mean, self.normalize_std = (
                 [0.485, 0.456, 0.406],
-                [0.229, 0.224, 0.225,],
+                [
+                    0.229,
+                    0.224,
+                    0.225,
+                ],
             )
 
         self.coco = COCO(json_path)
@@ -308,7 +312,7 @@ class CocoDataset(Dataset):
             sample["scale"],
             sample["offset_x"],
             sample["offset_y"],
-            sample["image_id"]
+            sample["image_id"],
         )
 
     def _coco_label_to_label(self, coco_label):
