@@ -188,6 +188,16 @@ class RetinaNet(pl.LightningModule):
         nms_classes,
         nms_scores,
     ):
+        image_ids = image_ids.detach().cpu().numpy()
+        scales = scales.detach().cpu().numpy()
+        offset_x = offset_x.detach().cpu().numpy()
+        offset_y = offset_y.detach().cpu().numpy()
+        nms_image_idx = nms_image_idx.detach().cpu().numpy()
+        nms_boxes = nms_boxes.detach().cpu().numpy()
+        nms_classes = nms_classes.detach().cpu().numpy()
+        nms_score = nms_scores.detach().cpu().numpy()
+        
+        
         coco_results = []
         # transform to COCO coords
         nms_boxes[:, 2] -= nms_boxes[:, 0]
@@ -208,9 +218,9 @@ class RetinaNet(pl.LightningModule):
 
             coco_res = {
                 "image_id": imid.item(),
-                "category_id": self.coco_labels[class_index.item()],
+                "category_id": self.coco_labels[class_index],
                 "score": float(score.item()),
-                "bbox": bbox.detach().cpu().numpy().tolist(),
+                "bbox": bbox.tolist(),
             }
             coco_results.append(coco_res)
         return coco_results
@@ -218,6 +228,8 @@ class RetinaNet(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         coco_results = []
         img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
+#         print(scales.device)
+        
         logits, offsets = self(img)
 
         cls_loss = self._forward_classification_head(logits, gt_cls)
@@ -277,7 +289,7 @@ class RetinaNet(pl.LightningModule):
     def configure_optimizers(
         self,
     ):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
         return optimizer
 
     def train_dataloader(self):
@@ -672,7 +684,35 @@ class NMS(nn.Module):
         self.nms_threshold = nms_threshold
 
     def forward(self, logits: torch.Tensor, boxes: torch.Tensor):
-        return batched_nms(logits, boxes, self.conf_threshold, self.nms_threshold)
+        num_classes = logits.size(-1)
+        # print(f"batched_nms >> num_classes: {num_classes}")
+        # print(logits.size())
+        scores, class_indices = logits.max(dim=2)
+        # print(f"batched_nms >> max_score: {scores.max()}")
+        # print(f"batched_nms >> min_score: {scores.min()}")
+        mask = scores > self.conf_threshold
+        instances_per_image = mask.sum(dim=1)
+
+        selected_class_indices = class_indices[mask]
+        image_ids = torch.arange(num_classes, num_classes + logits.size(0)).type_as(
+            class_indices
+        )
+        image_ids = torch.repeat_interleave(image_ids, instances_per_image)
+        category_idx = image_ids * (selected_class_indices + 1)
+        selected_bboxes = boxes[mask]
+
+        # print(selected_bboxes.size())
+        # print(category_idx.size())
+        # print(scores[mask].size())
+
+        keep_indices = torchvision.ops.boxes.batched_nms(
+            selected_bboxes, scores[mask], category_idx, self.nms_threshold
+        )
+        nms_image_idx = image_ids[keep_indices] - num_classes
+        nms_bboxes = selected_bboxes[keep_indices]
+        nms_scores = scores[mask][keep_indices]
+        nms_classes = selected_class_indices[keep_indices]
+        return nms_image_idx, nms_bboxes, nms_classes, nms_scores
 
 
 def init_weights(m):
