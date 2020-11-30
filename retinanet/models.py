@@ -4,6 +4,7 @@ Created: 22/11/20
 """
 import itertools
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
+import json
 
 import numpy as np
 import pytorch_lightning as pl
@@ -195,8 +196,8 @@ class RetinaNet(pl.LightningModule):
         nms_image_idx = nms_image_idx.detach().cpu().numpy()
         nms_boxes = nms_boxes.detach().cpu().numpy()
         nms_classes = nms_classes.detach().cpu().numpy()
-        nms_score = nms_scores.detach().cpu().numpy()
-        
+        nms_scores = nms_scores.detach().cpu().numpy()
+    
         
         coco_results = []
         # transform to COCO coords
@@ -219,7 +220,7 @@ class RetinaNet(pl.LightningModule):
             coco_res = {
                 "image_id": imid.item(),
                 "category_id": self.coco_labels[class_index],
-                "score": float(score.item()),
+                "score": float(score),
                 "bbox": bbox.tolist(),
             }
             coco_results.append(coco_res)
@@ -279,12 +280,17 @@ class RetinaNet(pl.LightningModule):
         print(f"validation-loss (classif): {avg_cls_loss.item(): .4f}")
         print(f"validation-loss (reg): {avg_reg_loss.item(): .4f}")
 
+        with open("/home/ubuntu/val_bbox.json", "w") as f:
+            json.dump(coco_results, f, indent = 2)
+        
         # print(coco_results)
         coco_dt = self.val_coco_gt.loadRes(coco_results)
         cocoEval = COCOeval(self.val_coco_gt, coco_dt, "bbox")
         cocoEval.evaluate()
         cocoEval.accumulate()
         cocoEval.summarize()
+        
+        
 
     def configure_optimizers(
         self,
@@ -496,7 +502,8 @@ class UpsampleSkipBlock(nn.Module):
                 "nearest",
                 "bilinear",
             ), f"Upsample mode must be either `nearest` or `bilinear`, got {upsample}"
-            self.up = nn.Upsample(scale_factor=2, mode=upsample, align_corners=False)
+            align_corners = False if upsample == 'bilinear' else None
+            self.up = nn.Upsample(scale_factor=2, mode=upsample, align_corners=align_corners)
         else:
             self.up = nn.ConvTranspose2d(
                 in_channels=in_channels,
@@ -665,7 +672,7 @@ class OffsetsToBBox(nn.Module):
         std: torch.Tensor,
     ) -> torch.Tensor:
         anchors = xyxy_to_ccwh(anchors)
-        offsets = offsets * std + mean
+#         offsets = offsets * std + mean
 
         cc = offsets[..., :2]
         wh = offsets[..., 2:]
@@ -678,40 +685,41 @@ class OffsetsToBBox(nn.Module):
 
 
 class NMS(nn.Module):
-    def __init__(self, conf_threshold: float = 0.1, nms_threshold: float = 0.5):
+    def __init__(self, conf_threshold: float = 0.3, nms_threshold: float = 0.5):
         super(NMS, self).__init__()
         self.conf_threshold = conf_threshold
         self.nms_threshold = nms_threshold
 
     def forward(self, logits: torch.Tensor, boxes: torch.Tensor):
         num_classes = logits.size(-1)
+        batch_size = logits.size(0)
         # print(f"batched_nms >> num_classes: {num_classes}")
         # print(logits.size())
         scores, class_indices = logits.max(dim=2)
-        # print(f"batched_nms >> max_score: {scores.max()}")
-        # print(f"batched_nms >> min_score: {scores.min()}")
+        rows = (torch.arange(batch_size, dtype=torch.long)[:, None] * num_classes).type_as(class_indices)
+        cat_idx = class_indices + rows
+        print(f"batched_nms >> max_score: {scores.max()}")
+        print(f"batched_nms >> min_score: {scores.min()}")
         mask = scores > self.conf_threshold
         instances_per_image = mask.sum(dim=1)
-
-        selected_class_indices = class_indices[mask]
-        image_ids = torch.arange(num_classes, num_classes + logits.size(0)).type_as(
-            class_indices
-        )
+        print(f"batched_nms >> instance per image: {instances_per_image}")
+#         selected_class_indices = class_indices[mask]
+        image_ids = torch.arange(batch_size).type_as(class_indices)
         image_ids = torch.repeat_interleave(image_ids, instances_per_image)
-        category_idx = image_ids * (selected_class_indices + 1)
-        selected_bboxes = boxes[mask]
+#         category_idx = image_ids * (selected_class_indices + 1)
+#         selected_bboxes = boxes[mask]
 
         # print(selected_bboxes.size())
         # print(category_idx.size())
         # print(scores[mask].size())
 
         keep_indices = torchvision.ops.boxes.batched_nms(
-            selected_bboxes, scores[mask], category_idx, self.nms_threshold
+            boxes[mask], scores[mask], cat_idx[mask], self.nms_threshold
         )
-        nms_image_idx = image_ids[keep_indices] - num_classes
-        nms_bboxes = selected_bboxes[keep_indices]
+        nms_image_idx = image_ids[keep_indices]
+        nms_bboxes = boxes[mask][keep_indices]
         nms_scores = scores[mask][keep_indices]
-        nms_classes = selected_class_indices[keep_indices]
+        nms_classes = class_indices[mask][keep_indices]
         return nms_image_idx, nms_bboxes, nms_classes, nms_scores
 
 
