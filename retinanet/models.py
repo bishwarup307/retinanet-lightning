@@ -3,6 +3,7 @@ __author__: bishwarup307
 Created: 22/11/20
 """
 import itertools
+import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import json
 
@@ -43,6 +44,7 @@ class RetinaNet(pl.LightningModule):
         prior_std: Optional[List[float]] = None,
         coco_labels: Optional[Dict] = None,
         val_coco_gt: Optional[Any] = None,
+        classification_bias_prior: float = 0.01,
     ):
         super(RetinaNet, self).__init__()
         self.backbone = _get_backbone(backbone, pretrained=pretrained_backbone)
@@ -58,6 +60,7 @@ class RetinaNet(pl.LightningModule):
             num_repeats=head_num_repeats,
             activation=head_activation,
         )
+
         self.regression = RetineNetHead(
             num_priors * 4,
             channels,
@@ -82,7 +85,6 @@ class RetinaNet(pl.LightningModule):
         self.val_coco_gt = val_coco_gt
         self.prior_mean = ifnone(
             prior_mean,
-            # torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32))
             nn.Parameter(
                 torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)),
                 requires_grad=False,
@@ -90,7 +92,6 @@ class RetinaNet(pl.LightningModule):
         )
         self.prior_std = ifnone(
             prior_std,
-            # torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32))
             nn.Parameter(
                 torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)),
                 requires_grad=False,
@@ -100,6 +101,13 @@ class RetinaNet(pl.LightningModule):
         self.fpn.apply(init_weights)
         self.classification.apply(init_weights)
         self.regression.apply(init_weights)
+
+        self.classification.block[-1].weight.data.fill_(0)
+        self.classification.block[-1].bias.data.fill_(
+            -math.log((1.0 - classification_bias_prior) / classification_bias_prior)
+        )
+        self.regression.block[-1].weight.data.fill_(0)
+        self.regression.block[-1].bias.data.fill_(0)
 
         # TODO: save all hparams except anchors
         # self.save_hyperparameters(self._hyperparams())
@@ -197,8 +205,7 @@ class RetinaNet(pl.LightningModule):
         nms_boxes = nms_boxes.detach().cpu().numpy()
         nms_classes = nms_classes.detach().cpu().numpy()
         nms_scores = nms_scores.detach().cpu().numpy()
-    
-        
+
         coco_results = []
         # transform to COCO coords
         nms_boxes[:, 2] -= nms_boxes[:, 0]
@@ -229,8 +236,8 @@ class RetinaNet(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         coco_results = []
         img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
-#         print(scales.device)
-        
+        #         print(scales.device)
+
         logits, offsets = self(img)
 
         cls_loss = self._forward_classification_head(logits, gt_cls)
@@ -281,16 +288,14 @@ class RetinaNet(pl.LightningModule):
         print(f"validation-loss (reg): {avg_reg_loss.item(): .4f}")
 
         with open("/home/ubuntu/val_bbox.json", "w") as f:
-            json.dump(coco_results, f, indent = 2)
-        
+            json.dump(coco_results, f, indent=2)
+
         # print(coco_results)
         coco_dt = self.val_coco_gt.loadRes(coco_results)
         cocoEval = COCOeval(self.val_coco_gt, coco_dt, "bbox")
         cocoEval.evaluate()
         cocoEval.accumulate()
         cocoEval.summarize()
-        
-        
 
     def configure_optimizers(
         self,
@@ -502,8 +507,10 @@ class UpsampleSkipBlock(nn.Module):
                 "nearest",
                 "bilinear",
             ), f"Upsample mode must be either `nearest` or `bilinear`, got {upsample}"
-            align_corners = False if upsample == 'bilinear' else None
-            self.up = nn.Upsample(scale_factor=2, mode=upsample, align_corners=align_corners)
+            align_corners = False if upsample == "bilinear" else None
+            self.up = nn.Upsample(
+                scale_factor=2, mode=upsample, align_corners=align_corners
+            )
         else:
             self.up = nn.ConvTranspose2d(
                 in_channels=in_channels,
@@ -564,7 +571,8 @@ class FPN(nn.Module):
         super(FPN, self).__init__()
         ch_c3, ch_c4, ch_c5 = in_channels
 
-        self.p5 = Conv_1x1(ch_c5, channels)
+        self.p5_1 = Conv_1x1(ch_c5, channels)
+        self.p5_2 = nn.Conv2d(channels, channels, 3, 1, 1)
         self.p4 = UpsampleSkipBlock(channels, ch_c4, upsample)
         self.p3 = UpsampleSkipBlock(channels, ch_c3, upsample)
         self.p6 = nn.Conv2d(ch_c5, channels, kernel_size=3, stride=2, padding=1)
@@ -573,8 +581,9 @@ class FPN(nn.Module):
         )
 
     def forward(self, C3: torch.Tensor, C4: torch.Tensor, C5: torch.Tensor):
-        P5 = self.p5(C5)
-        P4 = self.p4(P5, C4)
+        P5_1 = self.p5_1(C5)
+        P5 = self.p5_2(P5_1)
+        P4 = self.p4(P5_1, C4)
         P3 = self.p3(P4, C3)
         P6 = self.p6(C5)
         P7 = self.p7(P6)
@@ -672,7 +681,7 @@ class OffsetsToBBox(nn.Module):
         std: torch.Tensor,
     ) -> torch.Tensor:
         anchors = xyxy_to_ccwh(anchors)
-#         offsets = offsets * std + mean
+        #         offsets = offsets * std + mean
 
         cc = offsets[..., :2]
         wh = offsets[..., 2:]
@@ -696,18 +705,20 @@ class NMS(nn.Module):
         # print(f"batched_nms >> num_classes: {num_classes}")
         # print(logits.size())
         scores, class_indices = logits.max(dim=2)
-        rows = (torch.arange(batch_size, dtype=torch.long)[:, None] * num_classes).type_as(class_indices)
+        rows = (
+            torch.arange(batch_size, dtype=torch.long)[:, None] * num_classes
+        ).type_as(class_indices)
         cat_idx = class_indices + rows
         print(f"batched_nms >> max_score: {scores.max()}")
         print(f"batched_nms >> min_score: {scores.min()}")
         mask = scores > self.conf_threshold
         instances_per_image = mask.sum(dim=1)
         print(f"batched_nms >> instance per image: {instances_per_image}")
-#         selected_class_indices = class_indices[mask]
+        #         selected_class_indices = class_indices[mask]
         image_ids = torch.arange(batch_size).type_as(class_indices)
         image_ids = torch.repeat_interleave(image_ids, instances_per_image)
-#         category_idx = image_ids * (selected_class_indices + 1)
-#         selected_bboxes = boxes[mask]
+        #         category_idx = image_ids * (selected_class_indices + 1)
+        #         selected_bboxes = boxes[mask]
 
         # print(selected_bboxes.size())
         # print(category_idx.size())
@@ -725,7 +736,9 @@ class NMS(nn.Module):
 
 def init_weights(m):
     if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
-        torch.nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+        # torch.nn.init.kaiming_normal_(m.weight, mode="fan_in", nonlinearity="relu")
+        n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+        m.weight.data.normal_(0, math.sqrt(2.0 / n))
         if m.bias is not None:
             torch.nn.init.constant_(m.bias, 0.0)
     elif isinstance(m, nn.BatchNorm2d):
