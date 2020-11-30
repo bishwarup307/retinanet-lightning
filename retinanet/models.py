@@ -111,12 +111,6 @@ class RetinaNet(pl.LightningModule):
 
         # TODO: save all hparams except anchors
         # self.save_hyperparameters(self._hyperparams())
-        # self._register_anchors()
-
-    # def _register_anchors(self):
-    #     self.priors =
-    # def _hyperparams(self, exclude = ['anchors']):
-    #     return {k: v for k, v in self.hparams.items() if k not in exclude}
 
     def _forward_classification_head(
         self, logits: torch.Tensor, gt_cls: torch.Tensor
@@ -234,95 +228,93 @@ class RetinaNet(pl.LightningModule):
             coco_results.append(coco_res)
         return coco_results
 
+    def on_validation_epoch_start(self) -> None:
+        self.image_ids = torch.tensor([], device=self.device, dtype=torch.long)
+        self.boxes = torch.tensor([], device=self.device)
+        self.scores = torch.tensor([], device=self.device)
+        self.class_idx = torch.tensor([], device=self.device, dtype=torch.long)
+        self.scales = torch.tensor([], device=self.device)
+        self.offset_x = torch.tensor([], device=self.device)
+        self.offset_y = torch.tensor([], device=self.device)
+
     def validation_step(self, batch, batch_idx):
-        coco_results = []
         img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
-        #         print(scales.device)
 
         logits, offsets = self(img)
 
         cls_loss = self._forward_classification_head(logits, gt_cls)
         reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
-        val_loss = cls_loss + reg_loss
 
-#         pred_boxes = self.calculate_bbox(
-#             self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
-#         )
-#         nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
-#             torch.sigmoid(logits), pred_boxes
-#         )
-#         # print(f"nms_out: {nms_image_idx}")
+        pred_boxes = self.calculate_bbox(
+            self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
+        )
+        nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
+            torch.sigmoid(logits), pred_boxes
+        )
 
-#         coco_res = self._format_coco_results(
-#             image_ids,
-#             scales,
-#             offset_x,
-#             offset_y,
-#             nms_image_idx,
-#             nms_bboxes,
-#             nms_classes,
-#             nms_scores,
-#         )
-#         # print(coco_res)
-#         coco_results.extend(coco_res)
+        self.image_ids = torch.cat([self.image_ids, image_ids[nms_image_idx]])
+        self.boxes = torch.cat([self.boxes, nms_bboxes])
+        self.scores = torch.cat([self.scores, nms_scores])
+        self.class_idx = torch.cat([self.class_idx, nms_classes])
+        self.scales = torch.cat([self.scales, scales[nms_image_idx]])
+        self.offset_x = torch.cat([self.offset_x, offset_x[nms_image_idx]])
+        self.offset_y = torch.cat([self.offset_y, offset_y[nms_image_idx]])
+
+        #         # print(f"nms_out: {nms_image_idx}")
+
+        #         coco_res = self._format_coco_results(
+        #             image_ids,
+        #             scales,
+        #             offset_x,
+        #             offset_y,
+        #             nms_image_idx,
+        #             nms_bboxes,
+        #             nms_classes,
+        #             nms_scores,
+        #         )
+        #         # print(coco_res)
+        #         coco_results.extend(coco_res)
 
         return {
-#             "val_loss": val_loss,
+            #             "val_loss": val_loss,
             "val_cls_loss": cls_loss,
             "val_reg_loss": reg_loss,
-#             "coco_results": coco_results,
+            #             "coco_results": coco_results,
         }
 
     def validation_epoch_end(self, outputs: List[Any]) -> None:
         avg_cls_loss = torch.stack([x["val_cls_loss"] for x in outputs]).mean()
         avg_reg_loss = torch.stack([x["val_reg_loss"] for x in outputs]).mean()
 
-#         coco_results = [x["coco_results"] for x in outputs]
-#         coco_results = list(itertools.chain(*coco_results))
-
         val_loss = avg_cls_loss + avg_reg_loss
-
         self.log("val/cls_loss", avg_cls_loss)
         self.log("val/reg_loss", avg_reg_loss)
         self.log("val_loss", val_loss)
-#         print(f"validation-loss (classif): {avg_cls_loss.item(): .4f}")
-#         print(f"validation-loss (reg): {avg_reg_loss.item(): .4f}")
 
-#         with open("/home/ubuntu/val_bbox.json", "w") as f:
-#             json.dump(coco_results, f, indent=2)
+        self.boxes[:, 2] = self.boxes[:, 2] - self.boxes[:, 0]
+        self.boxes[:, 3] = self.boxes[:, 3] - self.boxes[:, 1]
+        self.boxes[:, 0] = self.boxes[:, 0] - self.offset_x
+        self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
+        self.boxes = self.boxes / self.scales[:, None]
 
-#         # print(coco_results)
-#         coco_dt = self.val_coco_gt.loadRes(coco_results)
-#         cocoEval = COCOeval(self.val_coco_gt, coco_dt, "bbox")
-#         cocoEval.evaluate()
-#         cocoEval.accumulate()
-#         cocoEval.summarize()
+    #         print(f"validation-loss (classif): {avg_cls_loss.item(): .4f}")
+    #         print(f"validation-loss (reg): {avg_reg_loss.item(): .4f}")
+
+    #         with open("/home/ubuntu/val_bbox.json", "w") as f:
+    #             json.dump(coco_results, f, indent=2)
+
+    #         # print(coco_results)
+    #         coco_dt = self.val_coco_gt.loadRes(coco_results)
+    #         cocoEval = COCOeval(self.val_coco_gt, coco_dt, "bbox")
+    #         cocoEval.evaluate()
+    #         cocoEval.accumulate()
+    #         cocoEval.summarize()
 
     def configure_optimizers(
         self,
     ):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
         return optimizer
-
-#     def train_dataloader(self):
-#         dataset = CocoDataset(
-#             image_dir="/home/bishwarup/EV/v0.2.2/data/images",
-#             json_path="/home/bishwarup/EV/v0.2.2/data/annotations/train_non_empty.json",
-#             image_size=(512, 512),
-#         )
-#         train_loader = DataLoader(
-#             dataset, batch_size=16, num_workers=8, pin_memory=True
-#         )
-#         return train_loader
-
-#     def val_dataloader(self) -> Union[DataLoader, List[DataLoader]]:
-#         dataset = CocoDataset(
-#             image_dir="/home/bishwarup/EV/v0.2.2/data/images",
-#             json_path="/home/bishwarup/EV/v0.2.2/data/annotations/val_non_empty.json",
-#             image_size=(512, 512),
-#         )
-#         val_loader = DataLoader(dataset, batch_size=16, num_workers=8, pin_memory=True)
-#         return val_loader
 
 
 class RetineNetHead(nn.Module):
@@ -714,7 +706,7 @@ class NMS(nn.Module):
         print(f"batched_nms >> min_score: {scores.min()}")
         mask = scores > self.conf_threshold
         instances_per_image = mask.sum(dim=1)
-#         print(f"batched_nms >> instance per image: {instances_per_image}")
+        #         print(f"batched_nms >> instance per image: {instances_per_image}")
         #         selected_class_indices = class_indices[mask]
         image_ids = torch.arange(batch_size).type_as(class_indices)
         image_ids = torch.repeat_interleave(image_ids, instances_per_image)
