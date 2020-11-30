@@ -9,7 +9,7 @@ import numpy as np
 import albumentations as A
 import torch
 
-from retinanet.utils import ifnone
+from retinanet import utils
 
 
 class Resizer:
@@ -53,8 +53,8 @@ class UnNormalizer:
     def __init__(
         self, mean: Optional[List[float]] = None, std: Optional[List[float]] = None
     ):
-        self.mean = ifnone(mean, [0.485, 0.456, 0.406])
-        self.std = ifnone(std, [0.229, 0.224, 0.225])
+        self.mean = utils.ifnone(mean, [0.485, 0.456, 0.406])
+        self.std = utils.ifnone(std, [0.229, 0.224, 0.225])
 
     def __call__(self, tensor: torch.Tensor):
         """

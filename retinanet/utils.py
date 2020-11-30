@@ -4,11 +4,18 @@ Created: 21/11/20
 """
 
 import os
+import random
 from pathlib import Path
 from typing import Any, Union, Optional, Tuple
 
+import cv2
+import numpy as np
 import torch
 import torchvision
+from torch.utils.data import DataLoader, Dataset
+from bounding_box import bounding_box as bb
+
+from retinanet import augments
 
 
 def ifnone(x: Any, y: Any):
@@ -267,6 +274,53 @@ def batched_nms(
     nms_scores = scores[mask][keep_indices]
     nms_classes = selected_class_indices[keep_indices]
     return nms_image_idx, nms_bboxes, nms_classes, nms_scores
+
+
+def offset_to_bbox(offsets: torch.Tensor, anchors: torch.Tensor):
+    cc = offsets[..., :2]
+    wh = offsets[..., 2:]
+
+    cc = cc * anchors[..., 2:] + anchors[..., :2]
+    wh = wh.exp() * anchors[..., 2:]
+    boxes_ccwh = torch.cat([cc, wh], dim=2)
+    boxes_xyxy = ccwh_to_xyxy(boxes_ccwh)
+    return boxes_xyxy
+
+
+def visualize_random_sample(
+    dataset: Dataset, train: bool = True, unnormalize: bool = True
+):
+    n = len(dataset)
+    index = random.choice(np.arange(n))
+    if train:
+        img, gt_boxes, gt_cls = dataset[index]
+    else:
+        img, gt_boxes, gt_cls, *_ = dataset[index]
+    if unnormalize:
+        mean, std = dataset.normalize_mean, dataset.normalize_std
+        unm = augments.UnNormalizer(mean, std)
+        img = unm(img)
+    img = img.numpy().transpose(1, 2, 0)
+    img = (img * 255.0).astype(np.uint8)
+    img = np.ascontiguousarray(img)
+    assigned_indices = gt_cls > 0
+    labels = gt_cls[assigned_indices]
+    assigned_anchors = dataset.anchors[assigned_indices]
+    # assigned_anchors = xyxy_to_ccwh(assigned_anchors)
+    # print(labels)
+    for i, lbl in enumerate(labels):
+        coords = list(map(int, assigned_anchors[i].numpy().tolist()))
+        # print(coords)
+        # bb.add(img, *coords, "a", "blue")
+        cv2.rectangle(
+            img,
+            (coords[0], coords[1]),
+            (coords[2], coords[3]),
+            (0, 255, 0),
+            thickness=1,
+        )
+
+    return img
 
 
 if __name__ == "__main__":
