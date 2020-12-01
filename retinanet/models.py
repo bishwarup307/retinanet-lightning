@@ -113,29 +113,75 @@ class RetinaNet(pl.LightningModule):
         # TODO: save all hparams except anchors
         # self.save_hyperparameters(self._hyperparams())
 
-    def _forward_classification_head(
-        self, logits: torch.Tensor, gt_cls: torch.Tensor
-    ) -> torch.Tensor:
-        num_pos = (gt_cls > 0).sum(axis=1)
-        num_assigned = (gt_cls > -1).sum(axis=1)
-
-        mask = gt_cls > -1
-        masked_gt = gt_cls[mask]
-        masked_logits = logits[mask]
-        masked_target_one_hot = F.one_hot(
-            masked_gt.long(), num_classes=self.num_classes + 1  # +1 for background
-        ).float()
-        # background class is not used for loss calculation
-        # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
-        cls_loss = self.classification_loss(
-            masked_logits, masked_target_one_hot[:, 1:], num_pos, num_assigned
-        )
-        return cls_loss
+    # def _forward_classification_head(
+    #     self, logits: torch.Tensor, gt_cls: torch.Tensor
+    # ) -> torch.Tensor:
+    #     num_pos = (gt_cls > 0).sum(axis=1)
+    #     num_assigned = (gt_cls > -1).sum(axis=1)
+    #
+    #     mask = gt_cls > -1
+    #     masked_gt = gt_cls[mask]
+    #     masked_logits = logits[mask]
+    #     masked_target_one_hot = F.one_hot(
+    #         masked_gt.long(), num_classes=self.num_classes + 1  # +1 for background
+    #     ).float()
+    #     # background class is not used for loss calculation
+    #     # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
+    #     cls_loss = self.classification_loss(
+    #         masked_logits, masked_target_one_hot[:, 1:], num_pos, num_assigned
+    #     )
+    #     return cls_loss
 
     # def on_train_start(self):
     #     loader = self.train_dataloader()
     #     self.anchors = loader.dataset.anchors
     #     self.image_size = loader.dataset.image_size
+
+    def _forward_classification_head(self, logits: torch.Tensor, gt_cls: torch.Tensor):
+        classification_losses = []
+        batch_size = logits.size(0)
+        for j in range(batch_size):
+            classification = logits[j, :, :]
+            labels = gt_cls[j, :]
+            classification = torch.sigmoid(classification)
+            classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
+            if gt_cls[j] == 0:
+                alpha_factor = 1.0 - self.focal_loss_alpha
+                focal_weight = classification
+                focal_weight = alpha_factor * torch.pow(
+                    focal_weight, self.focal_loss_gamma
+                )
+
+                bce = -(torch.log(1.0 - classification))
+
+                # cls_loss = focal_weight * torch.pow(bce, gamma)
+                cls_loss = focal_weight * bce
+                classification_losses.append(cls_loss.sum())
+
+            targets = torch.ones_like(classification) * -1
+            positive_indices = torch.gt(labels, 0)
+            num_positive_anchors = positive_indices.sum()
+            targets[positive_indices, :] = 0
+            targets[positive_indices, (labels[positive_indices] - 1).long()] = 1
+
+            alpha_factor = torch.ones_like(targets) * self.focal_loss_alpha
+            alpha_factor = torch.where(
+                torch.eq(targets, 1.0), alpha_factor, 1.0 - alpha_factor
+            )
+            focal_weight = torch.where(
+                torch.eq(targets, 1.0), 1.0 - classification, classification
+            )
+            focal_weight = alpha_factor * torch.pow(focal_weight, self.focal_loss_gamma)
+
+            bce = -(
+                targets * torch.log(classification)
+                + (1.0 - targets) * torch.log(1.0 - classification)
+            )
+            cls_loss = focal_weight * bce
+            classification_losses.append(
+                cls_loss.sum() / torch.clamp(num_positive_anchors.float(), min=1.0)
+            )
+            return torch.stack(classification_losses).mean()
 
     def _forward_regression_head(
         self,
