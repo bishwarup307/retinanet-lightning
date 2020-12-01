@@ -77,7 +77,7 @@ class DataModule(pl.LightningDataModule):
             self.train_dataset = CocoDataset(
                 image_dir=self.train_image_dir,
                 json_path=self.train_label_path,
-                image_size=self.image_size,
+                image_size=self.image_size
             )
             self.num_classes = len(self.train_dataset.coco.getCatIds())
             self.anchors = self.train_dataset.anchors
