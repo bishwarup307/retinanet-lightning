@@ -555,8 +555,8 @@ class UpsampleSkipBlock(nn.Module):
     def forward(self, top: torch.Tensor, skip: torch.Tensor):
         merged = self.up(top)
         merged = merged + self.skip(skip)
-        merged = self.conv(merged)
-        return merged
+        merged_smoothed = self.conv(merged)
+        return merged_smoothed, merged
 
 
 class FPN(nn.Module):
@@ -607,8 +607,8 @@ class FPN(nn.Module):
     def forward(self, C3: torch.Tensor, C4: torch.Tensor, C5: torch.Tensor):
         P5_1 = self.p5_1(C5)
         P5 = self.p5_2(P5_1)
-        P4 = self.p4(P5_1, C4)
-        P3 = self.p3(P4, C3)
+        P4, P4_1 = self.p4(P5_1, C4)
+        P3, _ = self.p3(P4_1, C3)
         P6 = self.p6(C5)
         P7 = self.p7(P6)
         return P3, P4, P5, P6, P7
