@@ -42,10 +42,10 @@ class FocalLoss(nn.Module):
             loss = alpha * loss
 
         loss = loss.sum(axis=1)
-        scatter_indices = torch.arange(len(num_assigned), device=self.device)
+        scatter_indices = torch.arange(len(num_assigned)).type_as(num_assigned)
         scatter_indices = torch.repeat_interleave(scatter_indices, num_assigned)
 
-        image_losses = torch.zeros_like(num_assigned)
+        image_losses = torch.zeros_like(num_assigned).float()
         image_losses = image_losses.scatter_add(0, scatter_indices, loss)
 
         num_pos = torch.clamp(num_pos, min=1.0)
