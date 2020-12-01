@@ -25,7 +25,13 @@ class FocalLoss(nn.Module):
         self.gamma = gamma
         self.reduction = reduction
 
-    def forward(self, logits: torch.Tensor, labels: torch.Tensor):
+    def forward(
+        self,
+        logits: torch.Tensor,
+        labels: torch.Tensor,
+        num_pos: torch.Tensor,
+        num_assigned: torch.Tensor,
+    ):
         ce_loss = F.binary_cross_entropy_with_logits(logits, labels, reduction="none")
         p = torch.sigmoid(logits)
         p_t = p * labels + (1 - p) * (1 - labels)
@@ -35,10 +41,21 @@ class FocalLoss(nn.Module):
             alpha = self.alpha * labels + (1.0 - self.alpha) * (1.0 - labels)
             loss = alpha * loss
 
-        if self.reduction == "mean":
-            loss = loss.mean()
+        loss = loss.sum(axis=1)
+        scatter_indices = torch.arange(len(num_assigned), device=self.device)
+        scatter_indices = torch.repeat_interleave(scatter_indices, num_assigned)
 
-        if self.reduction == "sum":
-            loss = loss.sum()
+        image_losses = torch.zeros_like(num_assigned)
+        image_losses = image_losses.scatter_add(0, scatter_indices, loss)
 
-        return loss
+        num_pos = torch.clamp(num_pos, min=1.0)
+        image_losses = image_losses / num_pos
+        return image_losses.mean()
+
+        # if self.reduction == "mean":
+        #     loss = loss.mean()
+        #
+        # if self.reduction == "sum":
+        #     loss = loss.sum()
+        #
+        # return loss

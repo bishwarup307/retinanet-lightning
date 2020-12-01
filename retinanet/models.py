@@ -115,7 +115,9 @@ class RetinaNet(pl.LightningModule):
     def _forward_classification_head(
         self, logits: torch.Tensor, gt_cls: torch.Tensor
     ) -> torch.Tensor:
-        num_pos = (gt_cls > 0).sum()
+        num_pos = (gt_cls > 0).sum(axis=1)
+        num_assigned = (gt_cls > -1).sum(axis=1)
+
         mask = gt_cls > -1
         masked_gt = gt_cls[mask]
         masked_logits = logits[mask]
@@ -124,9 +126,8 @@ class RetinaNet(pl.LightningModule):
         ).float()
         # background class is not used for loss calculation
         # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
-        cls_loss = (
-            self.classification_loss(masked_logits, masked_target_one_hot[:, 1:])
-            / num_pos
+        cls_loss = self.classification_loss(
+            masked_logits, masked_target_one_hot[:, 1:], num_pos, num_assigned
         )
         return cls_loss
 
@@ -275,6 +276,9 @@ class RetinaNet(pl.LightningModule):
         #         # print(coco_res)
         #         coco_results.extend(coco_res)
 
+        self.log("val_cls_loss", cls_loss, prog_bar=True)
+        self.log("val_reg_loss", reg_loss, prog_bar=True)
+
         return {
             #             "val_loss": val_loss,
             "val_cls_loss": cls_loss,
@@ -313,7 +317,7 @@ class RetinaNet(pl.LightningModule):
     def configure_optimizers(
         self,
     ):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
         return optimizer
 
 
