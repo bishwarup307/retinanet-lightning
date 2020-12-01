@@ -197,9 +197,9 @@ def get_anchor_labels(
 
         target_boxes = gt_boxes[max_idx]
         target_boxes = _calculate_offsets(anchors, target_boxes)
-#         target_boxes = (
-#             target_boxes / torch.tensor([0.1, 0.1, 0.2, 0.2]).float()
-#         )  # scale with prior variance
+        #         target_boxes = (
+        #             target_boxes / torch.tensor([0.1, 0.1, 0.2, 0.2]).float()
+        #         )  # scale with prior variance
 
         target_classes = 1 + gt_cls[max_idx]
         target_classes[max_iou <= neg_threshold] = 0.0

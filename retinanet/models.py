@@ -341,7 +341,9 @@ class RetinaNet(pl.LightningModule):
     #         cocoEval.accumulate()
     #         cocoEval.summarize()
 
-    def configure_optimizers(self,):
+    def configure_optimizers(
+        self,
+    ):
         optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
         return optimizer
 
