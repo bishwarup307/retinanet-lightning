@@ -6,6 +6,7 @@ import itertools
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import json
+import copy
 
 import numpy as np
 import pytorch_lightning as pl
@@ -164,6 +165,9 @@ class RetinaNet(pl.LightningModule):
             logits.append(cls_pred)
             offsets.append(reg_pred)
         return torch.cat(logits, dim=1), torch.cat(offsets, dim=1)
+    
+    def on_train_epoch_start(self) -> None:
+        self.backbone.freeze_bn()
 
     def training_step(self, batch, batch_idx):
         img, gt_boxes, gt_cls = batch
@@ -274,15 +278,18 @@ class RetinaNet(pl.LightningModule):
         #         )
         #         # print(coco_res)
         #         coco_results.extend(coco_res)
-
+        print(f"val_cls_loss: {cls_loss:.4f}, val_reg_loss: {reg_loss:.4f}")
+        
         return {
             #             "val_loss": val_loss,
             "val_cls_loss": cls_loss,
             "val_reg_loss": reg_loss,
             #             "coco_results": coco_results,
         }
+        
 
     def validation_epoch_end(self, outputs: List[Any]) -> None:
+#         print(outputs)
         avg_cls_loss = torch.stack([x["val_cls_loss"] for x in outputs]).mean()
         avg_reg_loss = torch.stack([x["val_reg_loss"] for x in outputs]).mean()
 
@@ -296,7 +303,25 @@ class RetinaNet(pl.LightningModule):
         self.boxes[:, 0] = self.boxes[:, 0] - self.offset_x
         self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
         self.boxes = self.boxes / self.scales[:, None]
+        self.coco_eval()
+        
+    def coco_eval(self):
+        boxes = self.boxes.detach().cpu().numpy()
+        image_ids = self.image_ids.detach().cpu().numpy()
+        scores = self.scores.detach().cpu().numpy()
+        class_ids = self.class_idx.detach().cpu().numpy()
+        
+        k = zip(boxes.tolist(), image_ids.tolist(), scores.tolist(), list(map(self.coco_labels.get, class_ids.tolist())))
+        coco_res = [dict(zip(["bbox", "image_id", "score", "category_id"], p)) for p in k]
 
+        gt = copy.deepcopy(self.val_coco_gt)
+        dt = gt.loadRes(coco_res)
+        cocoEval = COCOeval(gt,dt,"bbox")
+        cocoEval.evaluate()
+        cocoEval.accumulate()
+        cocoEval.summarize()
+
+        
     #         print(f"validation-loss (classif): {avg_cls_loss.item(): .4f}")
     #         print(f"validation-loss (reg): {avg_reg_loss.item(): .4f}")
 
@@ -313,7 +338,7 @@ class RetinaNet(pl.LightningModule):
     def configure_optimizers(
         self,
     ):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4)
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
         return optimizer
 
 
@@ -674,7 +699,7 @@ class OffsetsToBBox(nn.Module):
         std: torch.Tensor,
     ) -> torch.Tensor:
         anchors = xyxy_to_ccwh(anchors)
-        #         offsets = offsets * std + mean
+#         offsets = offsets * std + mean
 
         cc = offsets[..., :2]
         wh = offsets[..., 2:]
@@ -702,8 +727,8 @@ class NMS(nn.Module):
             torch.arange(batch_size, dtype=torch.long)[:, None] * num_classes
         ).type_as(class_indices)
         cat_idx = class_indices + rows
-        print(f"batched_nms >> max_score: {scores.max()}")
-        print(f"batched_nms >> min_score: {scores.min()}")
+#         print(f"batched_nms >> max_score: {scores.max()}")
+#         print(f"batched_nms >> min_score: {scores.min()}")
         mask = scores > self.conf_threshold
         instances_per_image = mask.sum(dim=1)
         #         print(f"batched_nms >> instance per image: {instances_per_image}")
