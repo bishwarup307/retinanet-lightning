@@ -131,7 +131,8 @@ def _project_anchors(
     y_mids = (torch.arange(fh) + 0.5) * stride
     x_mids = x_mids.repeat(fh, 1).T.flatten()
     y_mids = y_mids.repeat(fw)
-    xy = torch.stack([x_mids, y_mids]).T
+    # xy = torch.stack([x_mids, y_mids]).T
+    xy = torch.stack([y_mids, x_mids]).T
     xyxy = torch.cat([xy, xy], dim=1)
     # n_pos = xyxy.size(0)
 
