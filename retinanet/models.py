@@ -113,75 +113,24 @@ class RetinaNet(pl.LightningModule):
         # TODO: save all hparams except anchors
         # self.save_hyperparameters(self._hyperparams())
 
-    # def _forward_classification_head(
-    #     self, logits: torch.Tensor, gt_cls: torch.Tensor
-    # ) -> torch.Tensor:
-    #     num_pos = (gt_cls > 0).sum(axis=1)
-    #     num_assigned = (gt_cls > -1).sum(axis=1)
-    #
-    #     mask = gt_cls > -1
-    #     masked_gt = gt_cls[mask]
-    #     masked_logits = logits[mask]
-    #     masked_target_one_hot = F.one_hot(
-    #         masked_gt.long(), num_classes=self.num_classes + 1  # +1 for background
-    #     ).float()
-    #     # background class is not used for loss calculation
-    #     # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
-    #     cls_loss = self.classification_loss(
-    #         masked_logits, masked_target_one_hot[:, 1:], num_pos, num_assigned
-    #     )
-    #     return cls_loss
+    def _forward_classification_head(
+        self, logits: torch.Tensor, gt_cls: torch.Tensor
+    ) -> torch.Tensor:
+        num_pos = (gt_cls > 0).sum(axis=1)
+        num_assigned = (gt_cls > -1).sum(axis=1)
 
-    # def on_train_start(self):
-    #     loader = self.train_dataloader()
-    #     self.anchors = loader.dataset.anchors
-    #     self.image_size = loader.dataset.image_size
-
-    def _forward_classification_head(self, logits: torch.Tensor, gt_cls: torch.Tensor):
-        classification_losses = []
-        batch_size = logits.size(0)
-        for j in range(batch_size):
-            classification = logits[j, :, :]
-            labels = gt_cls[j, :]
-            classification = torch.sigmoid(classification)
-            classification = torch.clamp(classification, 1e-4, 1.0 - 1e-4)
-            if gt_cls[j] == 0:
-                alpha_factor = 1.0 - self.focal_loss_alpha
-                focal_weight = classification
-                focal_weight = alpha_factor * torch.pow(
-                    focal_weight, self.focal_loss_gamma
-                )
-
-                bce = -(torch.log(1.0 - classification))
-
-                # cls_loss = focal_weight * torch.pow(bce, gamma)
-                cls_loss = focal_weight * bce
-                classification_losses.append(cls_loss.sum())
-
-            targets = torch.ones_like(classification) * -1
-            positive_indices = torch.gt(labels, 0)
-            num_positive_anchors = positive_indices.sum()
-            targets[positive_indices, :] = 0
-            targets[positive_indices, (labels[positive_indices] - 1).long()] = 1
-
-            alpha_factor = torch.ones_like(targets) * self.focal_loss_alpha
-            alpha_factor = torch.where(
-                torch.eq(targets, 1.0), alpha_factor, 1.0 - alpha_factor
-            )
-            focal_weight = torch.where(
-                torch.eq(targets, 1.0), 1.0 - classification, classification
-            )
-            focal_weight = alpha_factor * torch.pow(focal_weight, self.focal_loss_gamma)
-
-            bce = -(
-                targets * torch.log(classification)
-                + (1.0 - targets) * torch.log(1.0 - classification)
-            )
-            cls_loss = focal_weight * bce
-            classification_losses.append(
-                cls_loss.sum() / torch.clamp(num_positive_anchors.float(), min=1.0)
-            )
-            return torch.stack(classification_losses).mean()
+        mask = gt_cls > -1
+        masked_gt = gt_cls[mask]
+        masked_logits = logits[mask]
+        masked_target_one_hot = F.one_hot(
+            masked_gt.long(), num_classes=self.num_classes + 1  # +1 for background
+        ).float()
+        # background class is not used for loss calculation
+        # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
+        cls_loss = self.classification_loss(
+            masked_logits, masked_target_one_hot[:, 1:], num_pos, num_assigned
+        )
+        return cls_loss
 
     def _forward_regression_head(
         self,
@@ -232,52 +181,52 @@ class RetinaNet(pl.LightningModule):
         self.log("loss", loss)
         return {"loss": loss}
 
-    def _format_coco_results(
-        self,
-        image_ids,
-        scales,
-        offset_x,
-        offset_y,
-        nms_image_idx,
-        nms_boxes,
-        nms_classes,
-        nms_scores,
-    ):
-        image_ids = image_ids.detach().cpu().numpy()
-        scales = scales.detach().cpu().numpy()
-        offset_x = offset_x.detach().cpu().numpy()
-        offset_y = offset_y.detach().cpu().numpy()
-        nms_image_idx = nms_image_idx.detach().cpu().numpy()
-        nms_boxes = nms_boxes.detach().cpu().numpy()
-        nms_classes = nms_classes.detach().cpu().numpy()
-        nms_scores = nms_scores.detach().cpu().numpy()
-
-        coco_results = []
-        # transform to COCO coords
-        nms_boxes[:, 2] -= nms_boxes[:, 0]
-        nms_boxes[:, 3] -= nms_boxes[:, 1]
-
-        for j, idx in enumerate(nms_image_idx):
-            # j ->  across predicted results
-            # idx -> across supplied ground truths
-            imid = image_ids[idx]
-            scale = scales[idx]
-            ox, oy = offset_x[idx], offset_y[idx]
-            score = nms_scores[j]
-            class_index = nms_classes[j]
-            bbox = nms_boxes[j]
-            bbox[0] -= ox
-            bbox[1] -= oy
-            bbox = bbox / scale
-
-            coco_res = {
-                "image_id": imid.item(),
-                "category_id": self.coco_labels[class_index],
-                "score": float(score),
-                "bbox": bbox.tolist(),
-            }
-            coco_results.append(coco_res)
-        return coco_results
+    # def _format_coco_results(
+    #     self,
+    #     image_ids,
+    #     scales,
+    #     offset_x,
+    #     offset_y,
+    #     nms_image_idx,
+    #     nms_boxes,
+    #     nms_classes,
+    #     nms_scores,
+    # ):
+    #     image_ids = image_ids.detach().cpu().numpy()
+    #     scales = scales.detach().cpu().numpy()
+    #     offset_x = offset_x.detach().cpu().numpy()
+    #     offset_y = offset_y.detach().cpu().numpy()
+    #     nms_image_idx = nms_image_idx.detach().cpu().numpy()
+    #     nms_boxes = nms_boxes.detach().cpu().numpy()
+    #     nms_classes = nms_classes.detach().cpu().numpy()
+    #     nms_scores = nms_scores.detach().cpu().numpy()
+    #
+    #     coco_results = []
+    #     # transform to COCO coords
+    #     nms_boxes[:, 2] -= nms_boxes[:, 0]
+    #     nms_boxes[:, 3] -= nms_boxes[:, 1]
+    #
+    #     for j, idx in enumerate(nms_image_idx):
+    #         # j ->  across predicted results
+    #         # idx -> across supplied ground truths
+    #         imid = image_ids[idx]
+    #         scale = scales[idx]
+    #         ox, oy = offset_x[idx], offset_y[idx]
+    #         score = nms_scores[j]
+    #         class_index = nms_classes[j]
+    #         bbox = nms_boxes[j]
+    #         bbox[0] -= ox
+    #         bbox[1] -= oy
+    #         bbox = bbox / scale
+    #
+    #         coco_res = {
+    #             "image_id": imid.item(),
+    #             "category_id": self.coco_labels[class_index],
+    #             "score": float(score),
+    #             "bbox": bbox.tolist(),
+    #         }
+    #         coco_results.append(coco_res)
+    #     return coco_results
 
     def on_validation_epoch_start(self) -> None:
         self.image_ids = torch.tensor([], device=self.device, dtype=torch.long)
@@ -325,7 +274,7 @@ class RetinaNet(pl.LightningModule):
         #         )
         #         # print(coco_res)
         #         coco_results.extend(coco_res)
-        print(f"val_cls_loss: {cls_loss:.4f}, val_reg_loss: {reg_loss:.4f}")
+        # print(f"val_cls_loss: {cls_loss:.4f}, val_reg_loss: {reg_loss:.4f}")
 
         return {
             #             "val_loss": val_loss,
@@ -751,7 +700,7 @@ class OffsetsToBBox(nn.Module):
         std: torch.Tensor,
     ) -> torch.Tensor:
         anchors = xyxy_to_ccwh(anchors)
-        #         offsets = offsets * std + mean
+        offsets = offsets * std + mean
 
         cc = offsets[..., :2]
         wh = offsets[..., 2:]
