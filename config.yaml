@@ -12,7 +12,7 @@ Dataset:
     annotations: "annotations/test.json"
   image_size: [512, 512, 3]
 Model:
-  backnone: 
+  backbone:
     name: "resnet_34"
     pretrained: True
     freeze_bn: True
@@ -31,25 +31,29 @@ Model:
     classification:
       num_classes: 1
       n_repeat: 4
+      use_bn: False
       loss:
         name: "focalloss"
         params:
           alpha: 0.25
           gamma: 2.0
+      classification_bias_prior: 0.01
     regression:
       n_repeat: 4
+      use_bn: False
       loss:
         name: "smooth_l1_loss"
         params:
           beta: 0.1
 Trainer:
+  logdir: "./logs"
   num_epochs: 100
   batch_size:
     train: 32
     val: 32
     test: 32
   optimizer:
-    name: torch.optim.Adam
+    name: "torch.optim.Adam"
     params:
       lr: 1e-4
       betas: (0.9, 0.999)
@@ -63,7 +67,30 @@ Trainer:
       warmup_steps: 0
       final_lr: 0
   gpu: True
+  tpu: 0
   n_gpus: 1
   workers: 4
+  clip_grad_norm: 0.1
+  amp: False
+  amp_backend: "native"
+  num_sanity_val_steps: 0
+  callbacks:
+    checkpoint:
+      enabled: True
+      save_top_k: 1
+      monitor: 'val_loss'
+      mode: 'auto'
+      verbose: False
+    early_stopping:
+      enabled: False
+      monitor: 'val_loss'
+      mode: 'auto'
+      patience: 5
+      verbose: False
+    lr_monitor:
+      enabled: False
+      logging_interval: null
+
+
 
 

@@ -12,10 +12,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+from omegaconf import DictConfig
 from pycocotools.cocoeval import COCOeval
 
 from retinanet.losses import FocalLoss
-from retinanet.utils import ccwh_to_xyxy, ifnone, xyxy_to_ccwh
+from retinanet.utils import ccwh_to_xyxy, ifnone, xyxy_to_ccwh, load_obj
 
 
 class RetinaNet(pl.LightningModule):
@@ -27,9 +28,11 @@ class RetinaNet(pl.LightningModule):
         channels: int = 256,
         num_priors: int = 9,
         fpn_upsample: str = "bilinear",
-        head_num_repeats: int = 4,
+        classification_head_num_repeats: int = 4,
+        regression_head_num_repeats: int = 4,
         head_activation: str = "relu",
-        head_use_bn: bool = False,
+        classification_head_use_bn: bool = False,
+        regression_head_use_bn: bool = False,
         backbone_freeze_bn: bool = True,
         focal_loss_alpha: float = 0.25,
         focal_loss_gamma: float = 2.0,
@@ -41,6 +44,7 @@ class RetinaNet(pl.LightningModule):
         coco_labels: Optional[Dict] = None,
         val_coco_gt: Optional[Any] = None,
         classification_bias_prior: float = 0.01,
+        optimizer: Optional[DictConfig] = None,
     ):
         super(RetinaNet, self).__init__()
         self.backbone = _get_backbone(backbone, pretrained=pretrained_backbone)
@@ -52,16 +56,16 @@ class RetinaNet(pl.LightningModule):
         self.classification = RetineNetHead(
             num_classes * num_priors,
             channels,
-            use_bn=head_use_bn,
-            num_repeats=head_num_repeats,
+            use_bn=classification_head_use_bn,
+            num_repeats=classification_head_num_repeats,
             activation=head_activation,
         )
 
         self.regression = RetineNetHead(
             num_priors * 4,
             channels,
-            use_bn=head_use_bn,
-            num_repeats=head_num_repeats,
+            use_bn=regression_head_use_bn,
+            num_repeats=regression_head_num_repeats,
             activation=head_activation,
         )
 
@@ -79,6 +83,8 @@ class RetinaNet(pl.LightningModule):
         self.image_size = image_size
         self.coco_labels = coco_labels
         self.val_coco_gt = val_coco_gt
+        self.optimizer = optimizer
+
         self.prior_mean = ifnone(
             prior_mean,
             nn.Parameter(
@@ -268,7 +274,10 @@ class RetinaNet(pl.LightningModule):
     def configure_optimizers(
         self,
     ):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-5)
+        optimizer = ifnone(
+            load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
+            torch.optim.Adam(self.parameters(), lr=1e-5),
+        )
         return optimizer
 
 
@@ -319,7 +328,6 @@ class ResNet(nn.Module):
         base = torchvision.models.__dict__[self.model_repr](pretrained=self.pretrained)
         self.layer0 = nn.Sequential(base.conv1, base.bn1, base.relu, base.maxpool)
         self.convs = nn.ModuleList([base.layer1, base.layer2, base.layer3, base.layer4])
-        # self._init_weights()
 
     def freeze_bn(self):
         for m in self.modules():

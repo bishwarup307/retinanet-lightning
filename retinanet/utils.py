@@ -2,7 +2,7 @@
 __author__: bishwarup307
 Created: 21/11/20
 """
-
+import importlib
 import os
 import random
 from pathlib import Path
@@ -12,8 +12,13 @@ import cv2
 import numpy as np
 import torch
 import torchvision
-from torch.utils.data import DataLoader, Dataset
-from bounding_box import bounding_box as bb
+from omegaconf import DictConfig
+from pytorch_lightning.callbacks import (
+    ModelCheckpoint,
+    EarlyStopping,
+    LearningRateMonitor,
+)
+from torch.utils.data import Dataset
 
 from retinanet import augments
 
@@ -45,6 +50,66 @@ def to_tensor(x: Any):
     except ValueError as exc:
         print("invalid type for tensor conversion")
         raise exc
+
+
+# https://github.com/quantumblacklabs/kedro/blob/9809bd7ca0556531fa4a2fc02d5b2dc26cf8fa97/kedro/utils.py
+def load_obj(obj_path: str, default_obj_path: str = "") -> Any:
+    """Extract an object from a given path.
+    Args:
+        obj_path: Path to an object to be extracted, including the object name.
+        default_obj_path: Default object path.
+    Returns:
+        Extracted object.
+    Raises:
+        AttributeError: When the object does not have the given named attribute.
+    """
+    obj_path_list = obj_path.rsplit(".", 1)
+    obj_path = obj_path_list.pop(0) if len(obj_path_list) > 1 else default_obj_path
+    obj_name = obj_path_list[0]
+    module_obj = importlib.import_module(obj_path)
+    if not hasattr(module_obj, obj_name):
+        raise AttributeError(
+            "Object `{}` cannot be loaded from `{}`.".format(obj_name, obj_path)
+        )
+    return getattr(module_obj, obj_name)
+
+
+def get_device_config(gpus: int, tpus: int) -> Tuple[int, int]:
+    if tpus > 0:
+        return 0, tpus
+    if gpus > 0:
+        return gpus, 0
+    return 0, 0
+
+
+def get_callbacks(callback_config: DictConfig):
+    callbacks = []
+    for callback, params in callback_config.items():
+        if not params.enabled:
+            continue
+        if callback == "checkpoint":
+            callbacks.append(
+                ModelCheckpoint(
+                    save_top_k=params.save_top_k,
+                    monitor=params.monitor,
+                    mode=params.mode,
+                    verbose=params.verbose,
+                )
+            )
+        if callback == "early_stopping":
+            callbacks.append(
+                EarlyStopping(
+                    patience=params.patience,
+                    monitor=params.monitor,
+                    mode=params.mode,
+                    verbose=params.verbose,
+                )
+            )
+        if callback == "lr_monitor":
+            callbacks.append(
+                LearningRateMonitor(logging_interval=params.logging_interval)
+            )
+    return callbacks
 
 
 def xyxy_to_ccwh(t: torch.Tensor) -> torch.Tensor:
