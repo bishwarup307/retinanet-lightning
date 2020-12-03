@@ -2,11 +2,9 @@
 __author__: bishwarup307
 Created: 22/11/20
 """
-import itertools
-import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
-import json
 import copy
+import math
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pytorch_lightning as pl
@@ -15,12 +13,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 from pycocotools.cocoeval import COCOeval
-from torch.utils.data import DataLoader
 
-from retinanet.anchors import MultiBoxPrior
-from retinanet.datasets import CocoDataset
 from retinanet.losses import FocalLoss
-from retinanet.utils import batched_nms, ccwh_to_xyxy, ifnone, xyxy_to_ccwh
+from retinanet.utils import ccwh_to_xyxy, ifnone, xyxy_to_ccwh
 
 
 class RetinaNet(pl.LightningModule):
@@ -181,53 +176,6 @@ class RetinaNet(pl.LightningModule):
         self.log("loss", loss)
         return {"loss": loss}
 
-    # def _format_coco_results(
-    #     self,
-    #     image_ids,
-    #     scales,
-    #     offset_x,
-    #     offset_y,
-    #     nms_image_idx,
-    #     nms_boxes,
-    #     nms_classes,
-    #     nms_scores,
-    # ):
-    #     image_ids = image_ids.detach().cpu().numpy()
-    #     scales = scales.detach().cpu().numpy()
-    #     offset_x = offset_x.detach().cpu().numpy()
-    #     offset_y = offset_y.detach().cpu().numpy()
-    #     nms_image_idx = nms_image_idx.detach().cpu().numpy()
-    #     nms_boxes = nms_boxes.detach().cpu().numpy()
-    #     nms_classes = nms_classes.detach().cpu().numpy()
-    #     nms_scores = nms_scores.detach().cpu().numpy()
-    #
-    #     coco_results = []
-    #     # transform to COCO coords
-    #     nms_boxes[:, 2] -= nms_boxes[:, 0]
-    #     nms_boxes[:, 3] -= nms_boxes[:, 1]
-    #
-    #     for j, idx in enumerate(nms_image_idx):
-    #         # j ->  across predicted results
-    #         # idx -> across supplied ground truths
-    #         imid = image_ids[idx]
-    #         scale = scales[idx]
-    #         ox, oy = offset_x[idx], offset_y[idx]
-    #         score = nms_scores[j]
-    #         class_index = nms_classes[j]
-    #         bbox = nms_boxes[j]
-    #         bbox[0] -= ox
-    #         bbox[1] -= oy
-    #         bbox = bbox / scale
-    #
-    #         coco_res = {
-    #             "image_id": imid.item(),
-    #             "category_id": self.coco_labels[class_index],
-    #             "score": float(score),
-    #             "bbox": bbox.tolist(),
-    #         }
-    #         coco_results.append(coco_res)
-    #     return coco_results
-
     def on_validation_epoch_start(self) -> None:
         self.image_ids = torch.tensor([], device=self.device, dtype=torch.long)
         self.boxes = torch.tensor([], device=self.device)
@@ -260,22 +208,6 @@ class RetinaNet(pl.LightningModule):
         self.offset_x = torch.cat([self.offset_x, offset_x[nms_image_idx]])
         self.offset_y = torch.cat([self.offset_y, offset_y[nms_image_idx]])
 
-        #         # print(f"nms_out: {nms_image_idx}")
-
-        #         coco_res = self._format_coco_results(
-        #             image_ids,
-        #             scales,
-        #             offset_x,
-        #             offset_y,
-        #             nms_image_idx,
-        #             nms_bboxes,
-        #             nms_classes,
-        #             nms_scores,
-        #         )
-        #         # print(coco_res)
-        #         coco_results.extend(coco_res)
-        # print(f"val_cls_loss: {cls_loss:.4f}, val_reg_loss: {reg_loss:.4f}")
-
         return {
             #             "val_loss": val_loss,
             "val_cls_loss": cls_loss,
@@ -284,7 +216,6 @@ class RetinaNet(pl.LightningModule):
         }
 
     def validation_epoch_end(self, outputs: List[Any]) -> None:
-        #         print(outputs)
         avg_cls_loss = torch.stack([x["val_cls_loss"] for x in outputs]).mean()
         avg_reg_loss = torch.stack([x["val_reg_loss"] for x in outputs]).mean()
 
@@ -298,7 +229,8 @@ class RetinaNet(pl.LightningModule):
         self.boxes[:, 0] = self.boxes[:, 0] - self.offset_x
         self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
         self.boxes = self.boxes / self.scales[:, None]
-        self.coco_eval()
+        stats = self.coco_eval()
+        self._log_coco_results(stats)
 
     def coco_eval(self):
         boxes = self.boxes.detach().cpu().numpy()
@@ -318,23 +250,20 @@ class RetinaNet(pl.LightningModule):
 
         gt = copy.deepcopy(self.val_coco_gt)
         dt = gt.loadRes(coco_res)
-        cocoEval = COCOeval(gt, dt, "bbox")
-        cocoEval.evaluate()
-        cocoEval.accumulate()
-        cocoEval.summarize()
+        coco_eval = COCOeval(gt, dt, "bbox")
+        coco_eval.evaluate()
+        coco_eval.accumulate()
+        coco_eval.summarize()
+        return coco_eval.stats
 
-    #         print(f"validation-loss (classif): {avg_cls_loss.item(): .4f}")
-    #         print(f"validation-loss (reg): {avg_reg_loss.item(): .4f}")
-
-    #         with open("/home/ubuntu/val_bbox.json", "w") as f:
-    #             json.dump(coco_results, f, indent=2)
-
-    #         # print(coco_results)
-    #         coco_dt = self.val_coco_gt.loadRes(coco_results)
-    #         cocoEval = COCOeval(self.val_coco_gt, coco_dt, "bbox")
-    #         cocoEval.evaluate()
-    #         cocoEval.accumulate()
-    #         cocoEval.summarize()
+    def _log_coco_results(self, stats):
+        map_avg, map_50, map_75, map_small, map_medium, map_large, *_ = stats
+        self.log("mAP@0.5:0.95:0.05", map_avg)
+        self.log("mAP@0.5", map_50)
+        self.log("mAP@0.75", map_75)
+        self.log("mAP_small", map_small)
+        self.log("mAP_medium", map_medium)
+        self.log("mAP_large", map_large)
 
     def configure_optimizers(
         self,
