@@ -1,15 +1,9 @@
 Dataset:
   dataset: coco
   root: "/mydataset"
-  train:
-    images: "images"
-    annotations: "annotations/train.json"
-  val:
-    images: "images"
-    annotations: "annotations/val.json"
-  test:
-    images: "images"
-    annotations: "annotations/test.json"
+  train_name: "train_non_empty"
+  val_name: "val_non_empty"
+  test_name: null
   image_size: [512, 512, 3]
 Model:
   backbone:
@@ -55,20 +49,19 @@ Trainer:
   optimizer:
     name: "torch.optim.Adam"
     params:
-      lr: 1e-4
-      betas: (0.9, 0.999)
+      lr: 1e-5
+      betas: [0.9, 0.999]
       weight_decay: 1e-6
   scheduler:
     name: "torch.optim.lr_scheduler.OneCycleLR"
     params:
       max_lr: ${Trainer.optimizer.params.lr}
-      schedule: 'cosine'
-      epochs: ${Trainer.num_epochs}
-      warmup_steps: 0
-      final_lr: 0
-  gpu: True
-  tpu: 0
-  n_gpus: 1
+      anneal_strategy: 'cos'
+      pct_start: 1e-5
+      div_factor: 10
+      final_div_factor: 1e4
+  tpus: 0
+  gpus: 1
   workers: 4
   clip_grad_norm: 0.1
   amp: False

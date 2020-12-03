@@ -15,7 +15,7 @@ from torch.utils.data import Dataset, DataLoader
 
 from retinanet.anchors import MultiBoxPrior
 from retinanet.augments import Resizer, Augmenter, Normalizer
-from retinanet.utils import get_anchor_labels, isfile
+from retinanet.utils import get_anchor_labels, isfile, ifnone
 
 import pytorch_lightning as pl
 from omegaconf import DictConfig
@@ -23,11 +23,7 @@ from omegaconf import DictConfig
 
 class DataModule(pl.LightningDataModule):
     def __init__(
-        self,
-        cfg: DictConfig,
-        train_name: str = "train",
-        val_name: str = "val",
-        test_name: str = "test",
+        self, cfg: DictConfig,
     ):
         super(DataModule, self).__init__()
         if cfg.Dataset.dataset != "coco":
@@ -40,9 +36,9 @@ class DataModule(pl.LightningDataModule):
         self.annotation_dir = Path(cfg.Dataset.root) / "annotations"
         self.image_size = cfg.Dataset.image_size[:2]
 
-        self.train_name = train_name
-        self.val_name = val_name
-        self.test_name = test_name
+        self.train_name = ifnone(cfg.Dataset.train_name, "train")
+        self.val_name = ifnone(cfg.Dataset.val_name, "val")
+        self.test_name = ifnone(cfg.Dataset.test_name, "test")
         self.label_ext = "json" if cfg.Dataset.dataset == "coco" else None
         self._register_paths()
         if self.train_label_path is None:
@@ -81,6 +77,7 @@ class DataModule(pl.LightningDataModule):
             )
             self.num_classes = len(self.train_dataset.coco.getCatIds())
             self.anchors = self.train_dataset.anchors
+            self.train_samples = len(self.train_dataset)
 
             if self.val_label_path is not None:
                 self.val_dataset = CocoDataset(
@@ -108,7 +105,7 @@ class DataModule(pl.LightningDataModule):
             self.train_dataset,
             batch_size=self.cfg.Trainer.batch_size.train,
             num_workers=self.cfg.Trainer.workers,
-            pin_memory=self.cfg.Trainer.gpu and self.cfg.Trainer.n_gpus > 0,
+            pin_memory=self.cfg.Trainer.gpus > 0,
             shuffle=True,
         )
 
@@ -118,7 +115,7 @@ class DataModule(pl.LightningDataModule):
                 self.val_dataset,
                 batch_size=self.cfg.Trainer.batch_size.val,
                 num_workers=self.cfg.Trainer.workers,
-                pin_memory=self.cfg.Trainer.gpu and self.cfg.Trainer.n_gpus > 0,
+                pin_memory=self.cfg.Trainer.gpus > 0,
             )
 
     def test_dataloader(self, *args, **kwargs) -> Union[DataLoader, List[DataLoader]]:
@@ -127,7 +124,7 @@ class DataModule(pl.LightningDataModule):
                 self.test_dataset,
                 batch_size=self.cfg.Trainer.batch_size.test,
                 num_workers=self.cfg.Trainer.workers,
-                pin_memory=self.cfg.Trainer.gpu and self.cfg.Trainer.n_gpus > 0,
+                pin_memory=self.cfg.Trainer.gpus > 0,
             )
 
 
@@ -168,11 +165,7 @@ class CocoDataset(Dataset):
         except TypeError:
             self.normalize_mean, self.normalize_std = (
                 [0.485, 0.456, 0.406],
-                [
-                    0.229,
-                    0.224,
-                    0.225,
-                ],
+                [0.229, 0.224, 0.225,],
             )
 
         self.coco = COCO(json_path)

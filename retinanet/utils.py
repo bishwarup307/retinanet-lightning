@@ -2,12 +2,15 @@
 __author__: bishwarup307
 Created: 21/11/20
 """
+import copy
 import importlib
+import logging
 import os
 import random
 from pathlib import Path
 from typing import Any, Union, Optional, Tuple
 
+import colorama
 import cv2
 import numpy as np
 import torch
@@ -21,6 +24,13 @@ from pytorch_lightning.callbacks import (
 from torch.utils.data import Dataset
 
 from retinanet import augments
+
+LOG_COLORS = {
+    logging.ERROR: colorama.Fore.RED,
+    logging.WARNING: colorama.Fore.YELLOW,
+    logging.INFO: colorama.Fore.GREEN,
+    logging.DEBUG: colorama.Fore.WHITE,
+}
 
 
 def ifnone(x: Any, y: Any):
@@ -74,12 +84,61 @@ def load_obj(obj_path: str, default_obj_path: str = "") -> Any:
     return getattr(module_obj, obj_name)
 
 
-def get_device_config(gpus: int, tpus: int) -> Tuple[int, int]:
+def get_device_config(gpus: int, tpus: int):
     if tpus > 0:
-        return 0, tpus
+        return None, tpus
     if gpus > 0:
-        return gpus, 0
-    return 0, 0
+        return gpus, None
+    return None, None
+
+
+def get_total_steps(n_samples: int, batch_size: int) -> int:
+    div, mod = divmod(n_samples, batch_size)
+    if mod == 0:
+        return div
+    return div + 1
+
+
+class ColorFormatter(logging.Formatter):
+    def format(self, record, *args, **kwargs):
+        # if the corresponding logger has children, they may receive modified
+        # record, so we want to keep it intact
+        new_record = copy.copy(record)
+        if new_record.levelno in LOG_COLORS:
+            # we want levelname to be in different color, so let's modify it
+            new_record.levelname = "{color_begin}{level}{color_end}".format(
+                level=new_record.levelname,
+                filename=new_record.filename,
+                color_begin=LOG_COLORS[new_record.levelno],
+                color_end=colorama.Style.RESET_ALL,
+            )
+        # now we can let standart formatting take care of the rest
+        return super(ColorFormatter, self).format(new_record, *args, **kwargs)
+
+
+def get_logger(
+    name,
+    filepath: Optional[Union[str, os.PathLike]] = None,
+    level: Optional[str] = "debug",
+):
+    log_level = {"info": logging.INFO, "debug": logging.DEBUG, "error": logging.ERROR}
+
+    logger = logging.getLogger(name)
+    logger.setLevel(log_level.get(level.lower(), logging.INFO))
+    if filepath is not None:
+        file_handler = logging.FileHandler(filepath)
+        file_handler.setLevel(logging.DEBUG)
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(logging.DEBUG)
+    formatter = ColorFormatter(
+        "[%(asctime)s - %(levelname)s - %(filename)s:%(lineno)s] -> %(message)s"
+    )
+    if filepath is not None:
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+    return logger
 
 
 def get_callbacks(callback_config: DictConfig):

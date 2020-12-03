@@ -16,7 +16,16 @@ from omegaconf import DictConfig
 from pycocotools.cocoeval import COCOeval
 
 from retinanet.losses import FocalLoss
-from retinanet.utils import ccwh_to_xyxy, ifnone, xyxy_to_ccwh, load_obj
+from retinanet.utils import (
+    ccwh_to_xyxy,
+    ifnone,
+    xyxy_to_ccwh,
+    load_obj,
+    get_logger,
+    get_total_steps,
+)
+
+logger = get_logger(__name__)
 
 
 class RetinaNet(pl.LightningModule):
@@ -45,6 +54,10 @@ class RetinaNet(pl.LightningModule):
         val_coco_gt: Optional[Any] = None,
         classification_bias_prior: float = 0.01,
         optimizer: Optional[DictConfig] = None,
+        scheduler: Optional[DictConfig] = None,
+        dataset_size: Optional[int] = None,
+        batch_size: Optional[int] = None,
+        epochs: Optional[int] = None,
     ):
         super(RetinaNet, self).__init__()
         self.backbone = _get_backbone(backbone, pretrained=pretrained_backbone)
@@ -84,6 +97,8 @@ class RetinaNet(pl.LightningModule):
         self.coco_labels = coco_labels
         self.val_coco_gt = val_coco_gt
         self.optimizer = optimizer
+        self.scheduler = scheduler
+        self.total_steps = get_total_steps(dataset_size, batch_size) * epochs
 
         self.prior_mean = ifnone(
             prior_mean,
@@ -179,7 +194,7 @@ class RetinaNet(pl.LightningModule):
 
         self.log("train/cls_loss", cls_loss, prog_bar=True)
         self.log("train/reg_loss", reg_loss, prog_bar=True)
-        self.log("loss", loss)
+        self.log("loss", loss, logger=False)
         return {"loss": loss}
 
     def on_validation_epoch_start(self) -> None:
@@ -226,9 +241,16 @@ class RetinaNet(pl.LightningModule):
         avg_reg_loss = torch.stack([x["val_reg_loss"] for x in outputs]).mean()
 
         val_loss = avg_cls_loss + avg_reg_loss
-        self.log("val/cls_loss", avg_cls_loss)
-        self.log("val/reg_loss", avg_reg_loss)
-        self.log("val_loss", val_loss)
+
+        metrics = {
+            "val/cls_loss": avg_cls_loss,
+            "val/reg_loss": avg_reg_loss,
+            "val_loss": val_loss,
+        }
+        self.log_dict(metrics)
+        # self.log("val/cls_loss", avg_cls_loss)
+        # self.log("val/reg_loss", avg_reg_loss)
+        # self.log("val_loss", val_loss, logger=False)
 
         self.boxes[:, 2] = self.boxes[:, 2] - self.boxes[:, 0]
         self.boxes[:, 3] = self.boxes[:, 3] - self.boxes[:, 1]
@@ -264,21 +286,27 @@ class RetinaNet(pl.LightningModule):
 
     def _log_coco_results(self, stats):
         map_avg, map_50, map_75, map_small, map_medium, map_large, *_ = stats
-        self.log("mAP@0.5:0.95:0.05", map_avg)
-        self.log("mAP@0.5", map_50)
-        self.log("mAP@0.75", map_75)
-        self.log("mAP_small", map_small)
-        self.log("mAP_medium", map_medium)
-        self.log("mAP_large", map_large)
+        self.log("COCO/mAP@0.5:0.95:0.05", map_avg)
+        self.log("COCO/mAP@0.5", map_50)
+        self.log("COCO/mAP@0.75", map_75)
+        self.log("COCO/mAP_small", map_small)
+        self.log("COCO/mAP_medium", map_medium)
+        self.log("COCO/mAP_large", map_large)
 
-    def configure_optimizers(
-        self,
-    ):
+    def configure_optimizers(self,):
         optimizer = ifnone(
             load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
             torch.optim.Adam(self.parameters(), lr=1e-5),
         )
-        return optimizer
+
+        scheduler = load_obj(self.scheduler.name)(
+            optimizer, total_steps=self.total_steps, **self.scheduler.params
+        )
+        schedulers = {
+            "scheduler": scheduler,
+            "interval": "step",
+        }
+        return [optimizer], [schedulers]
 
 
 class RetineNetHead(nn.Module):
