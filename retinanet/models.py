@@ -23,6 +23,7 @@ from retinanet.utils import (
     load_obj,
     get_logger,
     get_total_steps,
+    to_tensor,
 )
 
 logger = get_logger(__name__)
@@ -31,89 +32,86 @@ logger = get_logger(__name__)
 class RetinaNet(pl.LightningModule):
     def __init__(
         self,
-        backbone: str,
-        num_classes: int,
-        pretrained_backbone: bool = True,
-        channels: int = 256,
-        num_priors: int = 9,
-        fpn_upsample: str = "bilinear",
-        classification_head_num_repeats: int = 4,
-        regression_head_num_repeats: int = 4,
-        head_activation: str = "relu",
-        classification_head_use_bn: bool = False,
-        regression_head_use_bn: bool = False,
-        backbone_freeze_bn: bool = True,
-        focal_loss_alpha: float = 0.25,
-        focal_loss_gamma: float = 2.0,
-        l1_loss_beta: float = 0.1,
-        image_size: Optional[Tuple[int, int]] = None,
+        cfg: DictConfig,
         anchors: Optional[torch.Tensor] = None,
-        prior_mean: Optional[List[float]] = None,
-        prior_std: Optional[List[float]] = None,
         coco_labels: Optional[Dict] = None,
         val_coco_gt: Optional[Any] = None,
-        classification_bias_prior: float = 0.01,
-        optimizer: Optional[DictConfig] = None,
-        scheduler: Optional[DictConfig] = None,
         dataset_size: Optional[int] = None,
-        batch_size: Optional[int] = None,
-        epochs: Optional[int] = None,
     ):
         super(RetinaNet, self).__init__()
-        self.backbone = _get_backbone(backbone, pretrained=pretrained_backbone)
-        if not pretrained_backbone:
+        self.save_hyperparameters(cfg,)
+        self.backbone = _get_backbone(
+            cfg.Model.backbone.name, pretrained=cfg.Model.backbone.pretrained
+        )
+        if not cfg.Model.backbone.pretrained:
             self.backbone.apply(init_weights)
-        self.num_classes = num_classes
+        self.num_classes = cfg.Model.head.classification.num_classes
         fmap_sizes = _get_feature_depths(str(self.backbone))
-        self.fpn = FPN(fmap_sizes, channels, fpn_upsample)
+        self.fpn = FPN(fmap_sizes, cfg.Model.FPN.channels, cfg.Model.FPN.upsample)
+        num_priors = len(cfg.Model.anchors.scales) * len(cfg.Model.anchors.ratios)
         self.classification = RetineNetHead(
-            num_classes * num_priors,
-            channels,
-            use_bn=classification_head_use_bn,
-            num_repeats=classification_head_num_repeats,
-            activation=head_activation,
+            self.num_classes * num_priors,
+            cfg.Model.FPN.channels,
+            use_bn=cfg.Model.head.classification.use_bn,
+            num_repeats=cfg.Model.head.classification.n_repeat,
+            activation=cfg.Model.head.classification.activation,
         )
 
         self.regression = RetineNetHead(
             num_priors * 4,
-            channels,
-            use_bn=regression_head_use_bn,
-            num_repeats=regression_head_num_repeats,
-            activation=head_activation,
+            cfg.Model.FPN.channels,
+            use_bn=cfg.Model.head.regression.use_bn,
+            num_repeats=cfg.Model.head.regression.n_repeat,
+            activation=cfg.Model.head.regression.activation,
         )
 
-        if backbone_freeze_bn:
+        if cfg.Model.backbone.freeze_bn:
             self.backbone.freeze_bn()
 
         # self.classification_loss = nn.BCEWithLogitsLoss()
         self.classification_loss = FocalLoss(
-            alpha=focal_loss_alpha, gamma=focal_loss_gamma, reduction="sum"
+            alpha=cfg.Model.head.classification.loss.params.alpha,
+            gamma=cfg.Model.head.classification.loss.params.gamma,
+            reduction="sum",
         )
-        self.regression_loss = nn.SmoothL1Loss(reduction="mean", beta=l1_loss_beta)
+        self.regression_loss = nn.SmoothL1Loss(
+            reduction="mean", beta=cfg.Model.head.regression.loss.params.beta
+        )
         self.calculate_bbox = OffsetsToBBox()
         self.nms = NMS()
         self.anchors = nn.Parameter(anchors, requires_grad=False)
-        self.image_size = image_size
+        self.image_size = cfg.Dataset.image_size[:2]
         self.coco_labels = coco_labels
         self.val_coco_gt = val_coco_gt
-        self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.total_steps = get_total_steps(dataset_size, batch_size) * epochs
+        self.optimizer = (cfg.Trainer.optimizer,)
+        self.scheduler = cfg.Trainer.scheduler
+        self.total_steps = (
+            get_total_steps(dataset_size, cfg.Trainer.batch_size.train)
+            * cfg.Trainer.num_epochs
+        )
 
-        self.prior_mean = ifnone(
-            prior_mean,
-            nn.Parameter(
-                torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)),
-                requires_grad=False,
-            ),
-        )
-        self.prior_std = ifnone(
-            prior_std,
-            nn.Parameter(
-                torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)),
-                requires_grad=False,
-            ),
-        )
+        prior_mean = ifnone(cfg.Model.anchors.prior_mean, [0, 0, 0, 0])
+        prior_std = ifnone(cfg.Model.anchors.prior_mean, [0.1, 0.1, 0.2, 0.2])
+        self.register_buffer("prior_mean", to_tensor(prior_mean))
+        self.register_buffer("prior_std", to_tensor(prior_std))
+
+        # self.prior_mean = ifnone(
+        #     cfg.Model.anchors.prior_mean,
+        #     nn.Parameter(
+        #         torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)),
+        #         requires_grad=False,
+        #     ),
+        # )
+        #
+        #
+        #
+        # self.prior_std = ifnone(
+        #     prior_std,
+        #     nn.Parameter(
+        #         torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)),
+        #         requires_grad=False,
+        #     ),
+        # )
 
         self.fpn.apply(init_weights)
         self.classification.apply(init_weights)
@@ -121,13 +119,36 @@ class RetinaNet(pl.LightningModule):
 
         self.classification.block[-1].weight.data.fill_(0)
         self.classification.block[-1].bias.data.fill_(
-            -math.log((1.0 - classification_bias_prior) / classification_bias_prior)
+            -math.log(
+                (1.0 - cfg.Model.head.classification.bias_prior)
+                / cfg.Model.head.classification.bias_prior
+            )
         )
         self.regression.block[-1].weight.data.fill_(0)
         self.regression.block[-1].bias.data.fill_(0)
 
         # TODO: save all hparams except anchors
-        # self.save_hyperparameters(self._hyperparams())
+        # self.save_hyperparameters(
+        #     "backbone",
+        #     "num_classes",
+        #     "pretrained_backbone",
+        #     "channels",
+        #     "num_priors",
+        #     "fpn_upsample",
+        #     "classification_head_num_repeats",
+        #     "regression_head_num_repeats",
+        #     "head_activation",
+        #     "classification_head_use_bn",
+        #     "regression_head_use_bn",
+        #     "backbone_freeze_bn",
+        #     "focal_loss_alpha",
+        #     "focal_loss_gamma",
+        #     "l1_loss_beta",
+        #     "image_size",
+        #     "classification_bias_prior",
+        #     "batch_size",
+        #     "epochs",
+        # )
 
     def _forward_classification_head(
         self, logits: torch.Tensor, gt_cls: torch.Tensor

@@ -35,29 +35,11 @@ def main():
     logger.info("successfully loaded data module")
 
     model = RetinaNet(
-        "resnet_34",
-        num_classes=dm.num_classes,
-        image_size=dm.image_size,
+        cfg=cfg,
         anchors=dm.anchors,
         coco_labels=dm.val_dataset.coco_labels,
         val_coco_gt=dm.val_dataset.coco,
-        pretrained_backbone=cfg.Model.backbone.pretrained,
-        backbone_freeze_bn=cfg.Model.backbone.freeze_bn,
-        channels=cfg.Model.FPN.channels,
-        fpn_upsample=cfg.Model.FPN.upsample,
-        focal_loss_alpha=cfg.Model.head.classification.loss.params.alpha,
-        focal_loss_gamma=cfg.Model.head.classification.loss.params.gamma,
-        l1_loss_beta=cfg.Model.head.regression.loss.params.beta,
-        classification_head_num_repeats=cfg.Model.head.classification.n_repeat,
-        classification_head_use_bn=cfg.Model.head.classification.use_bn,
-        regression_head_num_repeats=cfg.Model.head.regression.n_repeat,
-        regression_head_use_bn=cfg.Model.head.regression.use_bn,
-        classification_bias_prior=cfg.Model.head.classification.classification_bias_prior,
-        optimizer=cfg.Trainer.optimizer,
-        scheduler=cfg.Trainer.scheduler,
         dataset_size=dm.train_samples,
-        batch_size=cfg.Trainer.batch_size.train,
-        epochs=cfg.Trainer.num_epochs,
     )
     logger.info("successfully initialized the model")
 

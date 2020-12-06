@@ -15,8 +15,8 @@ Model:
     ratios: [0.5, 1, 2]
     sizes: [32, 64, 128, 256, 512]
     strides: [8, 16, 32, 64, 128]
-    mean: [0, 0, 0, 0]
-    std: [0.1, 0.1, 0.2, 0.2]
+    prior_mean: [0, 0, 0, 0]
+    prior_std: [0.1, 0.1, 0.2, 0.2]
   FPN:
     pyramid_levels: [3, 4, 5, 6, 7]
     channels: 256
@@ -26,15 +26,17 @@ Model:
       num_classes: 1
       n_repeat: 4
       use_bn: False
+      activation: 'relu'
       loss:
         name: "focalloss"
         params:
           alpha: 0.25
           gamma: 2.0
-      classification_bias_prior: 0.01
+      bias_prior: 0.01
     regression:
       n_repeat: 4
       use_bn: False
+      activation: 'relu'
       loss:
         name: "smooth_l1_loss"
         params:
@@ -81,7 +83,7 @@ Trainer:
       patience: 5
       verbose: False
     lr_monitor:
-      enabled: False
+      enabled: True
       logging_interval: null
 
 
