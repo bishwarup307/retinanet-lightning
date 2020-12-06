@@ -14,6 +14,7 @@ import torchvision
 from omegaconf import DictConfig
 from pycocotools.cocoeval import COCOeval
 
+from retinanet.anchors import MultiBoxPrior
 from retinanet.losses import FocalLoss
 from retinanet.utils import (
     ccwh_to_xyxy,
@@ -81,6 +82,18 @@ class RetinaNet(pl.LightningModule):
         # self.anchors = nn.Parameter(anchors, requires_grad=False)
 
         # get anchors
+        if anchors is None:
+            logger.info("Model initialized without anchors.")
+        # anchors = ifnone(anchors, torch.empty([]))
+
+        if anchors is None:
+            m = MultiBoxPrior()
+            sample_image = torch.randn(
+                size=(4, 3, cfg.Dataset.image_size[0], cfg.Dataset.image_size[1]),
+                device=self.device,
+            )
+            anchors = m(sample_image)
+
         self.register_buffer("anchors", anchors)
 
         self.image_size = cfg.Dataset.image_size[:2]
@@ -204,47 +217,53 @@ class RetinaNet(pl.LightningModule):
         return {"loss": loss}
 
     def on_validation_epoch_start(self) -> None:
-        self.image_ids = torch.tensor([], device=self.device, dtype=torch.long)
-        self.boxes = torch.tensor([], device=self.device)
-        self.scores = torch.tensor([], device=self.device)
-        self.class_idx = torch.tensor([], device=self.device, dtype=torch.long)
-        self.scales = torch.tensor([], device=self.device)
-        self.offset_x = torch.tensor([], device=self.device)
-        self.offset_y = torch.tensor([], device=self.device)
+        self._initialize_trackers()
+
+    def on_test_epoch_start(self) -> None:
+        self._initialize_trackers()
 
     def validation_step(self, batch, batch_idx):
+        # img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
+        #
+        # logits, offsets = self(img)
+        #
+        # cls_loss = self._forward_classification_head(logits, gt_cls)
+        # reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
+        #
+        # pred_boxes = self.calculate_bbox(
+        #     self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
+        # )
+        # nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
+        #     torch.sigmoid(logits), pred_boxes
+        # )
         img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
+        (
+            cls_loss,
+            reg_loss,
+            nms_image_idx,
+            nms_bboxes,
+            nms_classes,
+            nms_scores,
+        ) = self._nms_forward(img, gt_boxes, gt_cls)
 
-        logits, offsets = self(img)
-
-        cls_loss = self._forward_classification_head(logits, gt_cls)
-        reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
-
-        pred_boxes = self.calculate_bbox(
-            self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
+        self._update_trackers(
+            image_ids[nms_image_idx],
+            nms_bboxes,
+            nms_scores,
+            nms_classes,
+            scales[nms_image_idx],
+            offset_x[nms_image_idx],
+            offset_y[nms_image_idx],
         )
-        nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
-            torch.sigmoid(logits), pred_boxes
-        )
-
-        self.image_ids = torch.cat([self.image_ids, image_ids[nms_image_idx]])
-        self.boxes = torch.cat([self.boxes, nms_bboxes])
-        self.scores = torch.cat([self.scores, nms_scores])
-        self.class_idx = torch.cat([self.class_idx, nms_classes])
-        self.scales = torch.cat([self.scales, scales[nms_image_idx]])
-        self.offset_x = torch.cat([self.offset_x, offset_x[nms_image_idx]])
-        self.offset_y = torch.cat([self.offset_y, offset_y[nms_image_idx]])
 
         return {
-            #             "val_loss": val_loss,
-            "val_cls_loss": cls_loss,
-            "val_reg_loss": reg_loss,
-            #             "coco_results": coco_results,
+            "cls_loss": cls_loss,
+            "reg_loss": reg_loss,
         }
 
     def validation_epoch_end(self, outputs: List[Any]) -> None:
-        avg_cls_loss = torch.stack([x["val_cls_loss"] for x in outputs]).mean()
-        avg_reg_loss = torch.stack([x["val_reg_loss"] for x in outputs]).mean()
+        avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
+        avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
 
         val_loss = avg_cls_loss + avg_reg_loss
 
@@ -254,17 +273,30 @@ class RetinaNet(pl.LightningModule):
             "val_loss": val_loss,
         }
         self.log_dict(metrics)
-        # self.log("val/cls_loss", avg_cls_loss)
-        # self.log("val/reg_loss", avg_reg_loss)
-        # self.log("val_loss", val_loss, logger=False)
-
-        self.boxes[:, 2] = self.boxes[:, 2] - self.boxes[:, 0]
-        self.boxes[:, 3] = self.boxes[:, 3] - self.boxes[:, 1]
-        self.boxes[:, 0] = self.boxes[:, 0] - self.offset_x
-        self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
-        self.boxes = self.boxes / self.scales[:, None]
+        self._adjust_scales_offsets()
+        # self.boxes[:, 2] = self.boxes[:, 2] - self.boxes[:, 0]
+        # self.boxes[:, 3] = self.boxes[:, 3] - self.boxes[:, 1]
+        # self.boxes[:, 0] = self.boxes[:, 0] - self.offset_x
+        # self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
+        # self.boxes = self.boxes / self.scales[:, None]
         stats = self.coco_eval()
         self._log_coco_results(stats)
+
+    def test_step(self, batch, batch_idx):
+        metrics = self.validation_step(batch, batch_idx)
+        metrics = {
+            "cls_loss": metrics["cls_loss"],
+            "reg_loss": metrics["reg_loss"],
+        }
+        return metrics
+
+    def test_epoch_end(self, outputs: List[Any]) -> None:
+        avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
+        avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
+        self._adjust_scales_offsets()
+        self.coco_eval()
+        logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
+        logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
 
     def coco_eval(self):
         boxes = self.boxes.detach().cpu().numpy()
@@ -289,6 +321,55 @@ class RetinaNet(pl.LightningModule):
         coco_eval.accumulate()
         coco_eval.summarize()
         return coco_eval.stats
+
+    def _initialize_trackers(self) -> None:
+        self.image_ids = torch.tensor([], device=self.device, dtype=torch.long)
+        self.boxes = torch.tensor([], device=self.device)
+        self.scores = torch.tensor([], device=self.device)
+        self.class_idx = torch.tensor([], device=self.device, dtype=torch.long)
+        self.scales = torch.tensor([], device=self.device)
+        self.offset_x = torch.tensor([], device=self.device)
+        self.offset_y = torch.tensor([], device=self.device)
+
+    def _update_trackers(
+        self,
+        image_ids: torch.Tensor,
+        boxes: torch.Tensor,
+        scores: torch.Tensor,
+        class_ids: torch.Tensor,
+        scales: torch.Tensor,
+        offset_x: torch.Tensor,
+        offset_y: torch.Tensor,
+    ) -> None:
+        self.image_ids = torch.cat([self.image_ids, image_ids])
+        self.boxes = torch.cat([self.boxes, boxes])
+        self.scores = torch.cat([self.scores, scores])
+        self.class_idx = torch.cat([self.class_idx, class_ids])
+        self.scales = torch.cat([self.scales, scales])
+        self.offset_x = torch.cat([self.offset_x, offset_x])
+        self.offset_y = torch.cat([self.offset_y, offset_y])
+
+    def _nms_forward(self, img, gt_boxes, gt_cls):
+        # img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
+        logits, offsets = self(img)
+
+        cls_loss = self._forward_classification_head(logits, gt_cls)
+        reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
+
+        pred_boxes = self.calculate_bbox(
+            self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
+        )
+        nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
+            torch.sigmoid(logits), pred_boxes
+        )
+        return cls_loss, reg_loss, nms_image_idx, nms_bboxes, nms_classes, nms_scores
+
+    def _adjust_scales_offsets(self) -> None:
+        self.boxes[:, 2] = self.boxes[:, 2] - self.boxes[:, 0]
+        self.boxes[:, 3] = self.boxes[:, 3] - self.boxes[:, 1]
+        self.boxes[:, 0] = self.boxes[:, 0] - self.offset_x
+        self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
+        self.boxes = self.boxes / self.scales[:, None]
 
     def _log_coco_results(self, stats):
         map_avg, map_50, map_75, map_small, map_medium, map_large, *_ = stats
