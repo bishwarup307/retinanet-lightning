@@ -6,7 +6,6 @@ import copy
 import math
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -36,10 +35,10 @@ class RetinaNet(pl.LightningModule):
         anchors: Optional[torch.Tensor] = None,
         coco_labels: Optional[Dict] = None,
         val_coco_gt: Optional[Any] = None,
-        dataset_size: Optional[int] = None,
+        dataset_size: Optional[int] = 1,
     ):
         super(RetinaNet, self).__init__()
-        self.save_hyperparameters(cfg,)
+        self.save_hyperparameters("cfg")
         self.backbone = _get_backbone(
             cfg.Model.backbone.name, pretrained=cfg.Model.backbone.pretrained
         )
@@ -79,11 +78,15 @@ class RetinaNet(pl.LightningModule):
         )
         self.calculate_bbox = OffsetsToBBox()
         self.nms = NMS()
-        self.anchors = nn.Parameter(anchors, requires_grad=False)
+        # self.anchors = nn.Parameter(anchors, requires_grad=False)
+
+        # get anchors
+        self.register_buffer("anchors", anchors)
+
         self.image_size = cfg.Dataset.image_size[:2]
         self.coco_labels = coco_labels
         self.val_coco_gt = val_coco_gt
-        self.optimizer = (cfg.Trainer.optimizer,)
+        self.optimizer = cfg.Trainer.optimizer
         self.scheduler = cfg.Trainer.scheduler
         self.total_steps = (
             get_total_steps(dataset_size, cfg.Trainer.batch_size.train)
@@ -91,27 +94,9 @@ class RetinaNet(pl.LightningModule):
         )
 
         prior_mean = ifnone(cfg.Model.anchors.prior_mean, [0, 0, 0, 0])
-        prior_std = ifnone(cfg.Model.anchors.prior_mean, [0.1, 0.1, 0.2, 0.2])
+        prior_std = ifnone(cfg.Model.anchors.prior_std, [0.1, 0.1, 0.2, 0.2])
         self.register_buffer("prior_mean", to_tensor(prior_mean))
         self.register_buffer("prior_std", to_tensor(prior_std))
-
-        # self.prior_mean = ifnone(
-        #     cfg.Model.anchors.prior_mean,
-        #     nn.Parameter(
-        #         torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)),
-        #         requires_grad=False,
-        #     ),
-        # )
-        #
-        #
-        #
-        # self.prior_std = ifnone(
-        #     prior_std,
-        #     nn.Parameter(
-        #         torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)),
-        #         requires_grad=False,
-        #     ),
-        # )
 
         self.fpn.apply(init_weights)
         self.classification.apply(init_weights)
