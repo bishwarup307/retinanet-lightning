@@ -171,6 +171,25 @@ def get_callbacks(callback_config: DictConfig):
     return callbacks
 
 
+def coco_to_preds(coco: Any):
+    results = dict()
+    coco_dict = coco.dataset
+    for im in coco_dict["images"]:
+        im_id = im["id"]
+        filename = im["file_name"]
+        anns = coco.loadAnns(coco.getAnnIds(im_id))
+        for instance in anns:
+            bbox = list(map(int, instance["bbox"]))
+            score = instance["score"]
+            class_index = instance["category_id"]
+            record = {"bbox": bbox, "confidence": score, "class_index": class_index}
+            if filename in results:
+                results[filename].append(record)
+            else:
+                results[filename] = [record]
+    return results
+
+
 def xyxy_to_ccwh(t: torch.Tensor) -> torch.Tensor:
     """
     converts bbox coordinates from `(xmin, ymin, xmax, ymax)` to `(x_center, y_center, width, height)`

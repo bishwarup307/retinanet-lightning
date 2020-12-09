@@ -1,9 +1,9 @@
 Dataset:
   dataset: coco
   root: "/mydataset"
-  train_name: "train_non_empty"
-  val_name: "val_non_empty"
-  test_name: null
+  train_name: "train"
+  val_name: "val"
+  test_name: "test"
   image_size: [512, 512, 3]
 Model:
   backbone:
@@ -66,7 +66,7 @@ Trainer:
   gpus: 1
   workers: 4
   clip_grad_norm: 0.1
-  amp: False
+  amp: True
   amp_backend: "native"
   num_sanity_val_steps: 0
   callbacks:
@@ -85,6 +85,8 @@ Trainer:
     lr_monitor:
       enabled: True
       logging_interval: null
+  save_val_predictions: True
+  save_test_predictions: True
 
 
 

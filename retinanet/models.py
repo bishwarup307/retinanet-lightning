@@ -3,8 +3,10 @@ __author__: bishwarup307
 Created: 22/11/20
 """
 import copy
+import json
 import math
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from pathlib import Path
+from typing import Any, List, Optional, Sequence, Tuple
 
 import pytorch_lightning as pl
 import torch
@@ -24,6 +26,7 @@ from retinanet.utils import (
     get_logger,
     get_total_steps,
     to_tensor,
+    coco_to_preds,
 )
 
 logger = get_logger(__name__)
@@ -34,8 +37,7 @@ class RetinaNet(pl.LightningModule):
         self,
         cfg: DictConfig,
         anchors: Optional[torch.Tensor] = None,
-        coco_labels: Optional[Dict] = None,
-        val_coco_gt: Optional[Any] = None,
+        dataset_val: Optional[Any] = None,
         dataset_size: Optional[int] = 1,
     ):
         super(RetinaNet, self).__init__()
@@ -97,8 +99,11 @@ class RetinaNet(pl.LightningModule):
         self.register_buffer("anchors", anchors)
 
         self.image_size = cfg.Dataset.image_size[:2]
-        self.coco_labels = coco_labels
-        self.val_coco_gt = val_coco_gt
+        if dataset_val is not None:
+            self.coco_labels = dataset_val.coco_labels
+            self.val_coco_gt = dataset_val.coco
+        self.val_preds = "val" if cfg.Trainer.save_val_predictions else None
+        self.test_preds = "test" if cfg.Trainer.save_test_predictions else None
         self.optimizer = cfg.Trainer.optimizer
         self.scheduler = cfg.Trainer.scheduler
         self.total_steps = (
@@ -279,7 +284,7 @@ class RetinaNet(pl.LightningModule):
         # self.boxes[:, 0] = self.boxes[:, 0] - self.offset_x
         # self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
         # self.boxes = self.boxes / self.scales[:, None]
-        stats = self.coco_eval()
+        stats = self.coco_eval(save_name=self.val_preds)
         self._log_coco_results(stats)
 
     def test_step(self, batch, batch_idx):
@@ -294,11 +299,11 @@ class RetinaNet(pl.LightningModule):
         avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
         avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
         self._adjust_scales_offsets()
-        self.coco_eval()
+        self.coco_eval(save_name=self.test_preds)
         logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
         logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
 
-    def coco_eval(self):
+    def coco_eval(self, save_name: Optional[str] = None):
         boxes = self.boxes.detach().cpu().numpy()
         image_ids = self.image_ids.detach().cpu().numpy()
         scores = self.scores.detach().cpu().numpy()
@@ -316,6 +321,12 @@ class RetinaNet(pl.LightningModule):
 
         gt = copy.deepcopy(self.val_coco_gt)
         dt = gt.loadRes(coco_res)
+        if save_name is not None:
+            predictions = coco_to_preds(dt)
+            with open(
+                Path(self.logger.log_dir).joinpath(f"{save_name}_predictions.json"), "w"
+            ) as f:
+                json.dump(predictions, f, indent=2)
         coco_eval = COCOeval(gt, dt, "bbox")
         coco_eval.evaluate()
         coco_eval.accumulate()

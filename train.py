@@ -3,9 +3,10 @@ __author__: bishwarup307
 Created: 03/12/20
 """
 
-from omegaconf import OmegaConf, DictConfig
 import argparse
+
 import pytorch_lightning as pl
+from omegaconf import OmegaConf
 
 from retinanet.datasets import DataModule
 from retinanet.models import RetinaNet
@@ -17,8 +18,10 @@ logger = get_logger(__name__)
 def parse_cli_args():
     parser = argparse.ArgumentParser("Retinanet config")
     parser.add_argument("-cfg", "--config-path", type=str, default="./config.yaml")
-    parser.add_argument("--root", type=str, required=False)
-    parser.add_argument("--logdir", type=str, required=False)
+    parser.add_argument(
+        "--root", type=str, required=False, help="dataset root directory"
+    )
+    parser.add_argument("--logdir", type=str, required=False, help="root log directory")
     args = parser.parse_args()
     return args
 
@@ -37,8 +40,7 @@ def main():
     model = RetinaNet(
         cfg=cfg,
         anchors=dm.anchors,
-        coco_labels=dm.val_dataset.coco_labels,
-        val_coco_gt=dm.val_dataset.coco,
+        dataset_val=dm.val_dataset,
         dataset_size=dm.train_samples,
     )
     logger.info("successfully initialized the model")
@@ -59,6 +61,11 @@ def main():
     )
 
     trainer.fit(model, dm)
+
+    if dm.test_dataset is not None:
+        logger.info("starting test...")
+        model.val_coco_gt = dm.test_dataset.coco
+        trainer.test(test_dataloaders=dm.test_dataloader())
 
 
 if __name__ == "__main__":
