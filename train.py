@@ -48,6 +48,8 @@ def main():
     gpus, tpus = get_device_config(cfg.Trainer.gpus, cfg.Trainer.tpus)
     callbacks = get_callbacks(cfg.Trainer.callbacks)
 
+    accelerator = cfg.Trainer.dist_backend if gpus > 1 else None
+
     logger.info("starting train...")
     trainer = pl.Trainer(
         default_root_dir=cfg.Trainer.logdir,
@@ -58,6 +60,7 @@ def main():
         num_sanity_val_steps=cfg.Trainer.num_sanity_val_steps,
         gradient_clip_val=cfg.Trainer.clip_grad_norm,
         callbacks=callbacks,
+        accelerator=accelerator,
     )
 
     trainer.fit(model, dm)

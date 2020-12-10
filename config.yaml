@@ -63,7 +63,8 @@ Trainer:
       div_factor: 10
       final_div_factor: 1e4
   tpus: 0
-  gpus: 1
+  gpus: 4
+  dist_backend: 'ddp'
   workers: 4
   clip_grad_norm: 0.1
   amp: True

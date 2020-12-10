@@ -391,7 +391,7 @@ class RetinaNet(pl.LightningModule):
         self.log("COCO/mAP_medium", map_medium)
         self.log("COCO/mAP_large", map_large)
 
-    def configure_optimizers(self,):
+    def configure_optimizers(self):
         optimizer = ifnone(
             load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
             torch.optim.Adam(self.parameters(), lr=1e-5),
