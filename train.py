@@ -12,6 +12,7 @@ from retinanet.datasets import DataModule
 from retinanet.models import RetinaNet
 from retinanet.utils import get_device_config, get_callbacks, ifnone, get_logger
 from pytorch_lightning import _logger as logger
+import torch.distributed as dist
 # logger = get_logger(__name__)
 
 
@@ -35,6 +36,8 @@ def main():
 
     dm = DataModule(cfg)
     dm.setup()
+    
+
     logger.info("successfully loaded data module")
 
     model = RetinaNet(
@@ -43,13 +46,14 @@ def main():
         dataset_val=dm.val_dataset,
         dataset_size=dm.train_samples,
     )
+    
     logger.info("successfully initialized the model")
 
     gpus, tpus = get_device_config(cfg.Trainer.gpus, cfg.Trainer.tpus)
     callbacks = get_callbacks(cfg.Trainer.callbacks)
 
     accelerator = cfg.Trainer.dist_backend if gpus > 1 else None
-
+    
     logger.info("starting train...")
     trainer = pl.Trainer(
         default_root_dir=cfg.Trainer.logdir,

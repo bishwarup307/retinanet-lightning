@@ -91,6 +91,7 @@ def get_device_config(gpus: int, tpus: int):
     if tpus > 0:
         return None, tpus
     if gpus > 0:
+        gpus = min(gpus, torch.cuda.device_count())
         return gpus, None
     return None, None
 

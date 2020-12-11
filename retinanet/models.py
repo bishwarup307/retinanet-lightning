@@ -120,6 +120,8 @@ class RetinaNet(pl.LightningModule):
         prior_std = ifnone(cfg.Model.anchors.prior_std, [0.1, 0.1, 0.2, 0.2])
         self.register_buffer("prior_mean", to_tensor(prior_mean))
         self.register_buffer("prior_std", to_tensor(prior_std))
+        
+        self.dist = cfg.Trainer.gpus > 1 and torch.cuda.device_count() > 1
 
         self.fpn.apply(init_weights)
         self.classification.apply(init_weights)
@@ -401,21 +403,23 @@ class RetinaNet(pl.LightningModule):
         self.log(f"COCO_{stage}/mAP_large", map_large)
 
     def configure_optimizers(self):
-#         optimizer = ifnone(
-#             load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
-#             torch.optim.Adam(self.parameters(), lr=1e-5),
-#         )
-
-#         optimizer = Lamb(self.parameters(), lr=0.001, weight_decay=1e-6, betas=(.9, .999), adam=True)
-#         scheduler = load_obj(self.scheduler.name)(
-#             optimizer, total_steps=self.total_steps, **self.scheduler.params
-#         )
-#         schedulers = {
-#             "scheduler": scheduler,
-#             "interval": "step",
-#         }
-        optimizer = apex.optimizers.FusedLAMB(self.parameters())
-        return [optimizer]#, [schedulers]
+        if self.dist:
+            logger.info("Training with DDP")
+            optimizer = apex.optimizers.FusedLAMB(self.parameters(), lr = 1e-3, weight_decay=0.01)
+        else:
+            optimizer = ifnone(
+                load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
+                torch.optim.Adam(self.parameters(), lr=1e-5),
+            )
+#             logger.info("Optimizer: adam")
+        scheduler = load_obj(self.scheduler.name)(
+            optimizer, total_steps=self.total_steps, **self.scheduler.params
+        )
+        schedulers = {
+            "scheduler": scheduler,
+            "interval": "step",
+        }
+        return [optimizer], [schedulers]
 
 
 class RetineNetHead(nn.Module):

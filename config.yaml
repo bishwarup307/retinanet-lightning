@@ -43,7 +43,7 @@ Model:
           beta: 0.1
 Trainer:
   logdir: "./logs"
-  num_epochs: 15
+  num_epochs: 30
   batch_size:
     train: 32
     val: 32
