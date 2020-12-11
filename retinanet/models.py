@@ -13,8 +13,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+import apex
 from omegaconf import DictConfig
-from pycocotools.cocoeval import COCOeval
+import numpy as np
+from coco.cocoeval import COCOeval
+from pytorch_lightning.utilities import rank_zero_only
 
 from retinanet.anchors import MultiBoxPrior
 from retinanet.losses import FocalLoss
@@ -26,10 +29,12 @@ from retinanet.utils import (
     get_logger,
     get_total_steps,
     to_tensor,
+    all_gather,
     coco_to_preds,
 )
-
-logger = get_logger(__name__)
+from retinanet.lamb import Lamb
+# logger = get_logger(__name__)
+from pytorch_lightning import _logger as logger
 
 
 class RetinaNet(pl.LightningModule):
@@ -228,19 +233,6 @@ class RetinaNet(pl.LightningModule):
         self._initialize_trackers()
 
     def validation_step(self, batch, batch_idx):
-        # img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
-        #
-        # logits, offsets = self(img)
-        #
-        # cls_loss = self._forward_classification_head(logits, gt_cls)
-        # reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
-        #
-        # pred_boxes = self.calculate_bbox(
-        #     self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
-        # )
-        # nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
-        #     torch.sigmoid(logits), pred_boxes
-        # )
         img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
         (
             cls_loss,
@@ -277,50 +269,107 @@ class RetinaNet(pl.LightningModule):
             "val/reg_loss": avg_reg_loss,
             "val_loss": val_loss,
         }
-        self.log_dict(metrics)
+        self.log_dict(metrics, sync_dist=True)
         self._adjust_scales_offsets()
-        # self.boxes[:, 2] = self.boxes[:, 2] - self.boxes[:, 0]
-        # self.boxes[:, 3] = self.boxes[:, 3] - self.boxes[:, 1]
-        # self.boxes[:, 0] = self.boxes[:, 0] - self.offset_x
-        # self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
-        # self.boxes = self.boxes / self.scales[:, None]
+        self._sync_processes()
         stats = self.coco_eval(save_name=self.val_preds)
         self._log_coco_results(stats)
 
     def test_step(self, batch, batch_idx):
-        metrics = self.validation_step(batch, batch_idx)
-        metrics = {
-            "cls_loss": metrics["cls_loss"],
-            "reg_loss": metrics["reg_loss"],
+        img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
+        (
+            cls_loss,
+            reg_loss,
+            nms_image_idx,
+            nms_bboxes,
+            nms_classes,
+            nms_scores,
+        ) = self._nms_forward(img, gt_boxes, gt_cls)
+
+        self._update_trackers(
+            image_ids[nms_image_idx],
+            nms_bboxes,
+            nms_scores,
+            nms_classes,
+            scales[nms_image_idx],
+            offset_x[nms_image_idx],
+            offset_y[nms_image_idx],
+        )
+
+        return {
+            "cls_loss": cls_loss,
+            "reg_loss": reg_loss,
         }
-        return metrics
+#         metrics = self.validation_step(batch, batch_idx)
+#         metrics = {
+#             "cls_loss": metrics["cls_loss"],
+#             "reg_loss": metrics["reg_loss"],
+#         }
+#         return metrics
 
     def test_epoch_end(self, outputs: List[Any]) -> None:
         avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
         avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
         self._adjust_scales_offsets()
+        self._sync_processes()
         self.coco_eval(save_name=self.test_preds)
         logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
         logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
 
-    def coco_eval(self, save_name: Optional[str] = None):
+    def _sync_processes(self):
         boxes = self.boxes.detach().cpu().numpy()
         image_ids = self.image_ids.detach().cpu().numpy()
         scores = self.scores.detach().cpu().numpy()
         class_ids = self.class_idx.detach().cpu().numpy()
-
+        
+        bb_sync = all_gather(boxes)
+        imageid_sync = all_gather(image_ids)
+        scores_sync = all_gather(scores)
+        classids_sync = all_gather(class_ids)
+        
         k = zip(
-            boxes.tolist(),
-            image_ids.tolist(),
-            scores.tolist(),
-            list(map(self.coco_labels.get, class_ids.tolist())),
+            np.concatenate(bb_sync).tolist(),
+            np.concatenate(imageid_sync).tolist(),
+            np.concatenate(scores_sync).tolist(),
+            list(map(self.coco_labels.get, np.concatenate(classids_sync).tolist())),
         )
         coco_res = [
             dict(zip(["bbox", "image_id", "score", "category_id"], p)) for p in k
         ]
+        self.coco_res = coco_res
+
+
+    @rank_zero_only
+    def coco_eval(self, save_name: Optional[str] = None):
+#         boxes = self.boxes.detach().cpu().numpy()
+#         image_ids = self.image_ids.detach().cpu().numpy()
+#         scores = self.scores.detach().cpu().numpy()
+#         class_ids = self.class_idx.detach().cpu().numpy()
+# #         print(len(boxes))
+# #         print(f"gpu box shapes: {boxes.shape}")
+# #         print(f"gpu image_id shapes: {image_ids.shape}")
+#         bb_sync = all_gather(boxes)
+#         imageid_sync = all_gather(image_ids)
+#         scores_sync = all_gather(scores)
+#         classids_sync = all_gather(class_ids)
+        
+# #         print(f"all gather box shapes: {[x.shape for x in bb]}")
+# #         print(f"all gather box cat: {np.concatenate(bb).shape}")
+# #         print(f"all gather image_id shapes: {[x.shape for x in imid]}")
+# #         print(f"all gather image_id cat: {np.concatenate(imid).shape}")
+# #         boxes, image_ids, scores, class_ids = self._run_all_gather()
+#         k = zip(
+#             np.concatenate(bb_sync).tolist(),
+#             np.concatenate(imageid_sync).tolist(),
+#             np.concatenate(scores_sync).tolist(),
+#             list(map(self.coco_labels.get, np.concatenate(classids_sync).tolist())),
+#         )
+#         coco_res = [
+#             dict(zip(["bbox", "image_id", "score", "category_id"], p)) for p in k
+#         ]
 
         gt = copy.deepcopy(self.val_coco_gt)
-        dt = gt.loadRes(coco_res)
+        dt = gt.loadRes(self.coco_res)
         if save_name is not None:
             predictions = coco_to_preds(dt)
             with open(
@@ -382,6 +431,7 @@ class RetinaNet(pl.LightningModule):
         self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
         self.boxes = self.boxes / self.scales[:, None]
 
+    @rank_zero_only
     def _log_coco_results(self, stats):
         map_avg, map_50, map_75, map_small, map_medium, map_large, *_ = stats
         self.log("COCO/mAP@0.5:0.95:0.05", map_avg)
@@ -392,19 +442,21 @@ class RetinaNet(pl.LightningModule):
         self.log("COCO/mAP_large", map_large)
 
     def configure_optimizers(self):
-        optimizer = ifnone(
-            load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
-            torch.optim.Adam(self.parameters(), lr=1e-5),
-        )
+#         optimizer = ifnone(
+#             load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
+#             torch.optim.Adam(self.parameters(), lr=1e-5),
+#         )
 
-        scheduler = load_obj(self.scheduler.name)(
-            optimizer, total_steps=self.total_steps, **self.scheduler.params
-        )
-        schedulers = {
-            "scheduler": scheduler,
-            "interval": "step",
-        }
-        return [optimizer], [schedulers]
+#         optimizer = Lamb(self.parameters(), lr=0.001, weight_decay=1e-6, betas=(.9, .999), adam=True)
+#         scheduler = load_obj(self.scheduler.name)(
+#             optimizer, total_steps=self.total_steps, **self.scheduler.params
+#         )
+#         schedulers = {
+#             "scheduler": scheduler,
+#             "interval": "step",
+#         }
+        optimizer = apex.optimizers.FusedLAMB(self.parameters())
+        return [optimizer]#, [schedulers]
 
 
 class RetineNetHead(nn.Module):

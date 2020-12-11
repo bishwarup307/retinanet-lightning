@@ -10,7 +10,7 @@ import cv2
 import numpy as np
 import torch
 from PIL import Image
-from pycocotools.coco import COCO
+from coco.coco import COCO
 from torch.utils.data import Dataset, DataLoader
 
 from retinanet.anchors import MultiBoxPrior

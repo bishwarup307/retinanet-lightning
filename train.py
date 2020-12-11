@@ -11,8 +11,8 @@ from omegaconf import OmegaConf
 from retinanet.datasets import DataModule
 from retinanet.models import RetinaNet
 from retinanet.utils import get_device_config, get_callbacks, ifnone, get_logger
-
-logger = get_logger(__name__)
+from pytorch_lightning import _logger as logger
+# logger = get_logger(__name__)
 
 
 def parse_cli_args():
@@ -68,7 +68,7 @@ def main():
     if dm.test_dataset is not None:
         logger.info("starting test...")
         model.val_coco_gt = dm.test_dataset.coco
-        trainer.test(test_dataloaders=dm.test_dataloader())
+        trainer.test(datamodule=dm)
 
 
 if __name__ == "__main__":

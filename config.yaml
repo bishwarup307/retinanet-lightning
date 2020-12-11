@@ -43,7 +43,7 @@ Model:
           beta: 0.1
 Trainer:
   logdir: "./logs"
-  num_epochs: 100
+  num_epochs: 15
   batch_size:
     train: 32
     val: 32
@@ -67,7 +67,7 @@ Trainer:
   dist_backend: 'ddp'
   workers: 4
   clip_grad_norm: 0.1
-  amp: True
+  amp: False
   amp_backend: "native"
   num_sanity_val_steps: 0
   callbacks:
