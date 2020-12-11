@@ -1,13 +1,13 @@
 Dataset:
   dataset: coco
-  root: "/mydataset"
-  train_name: "train"
-  val_name: "val"
-  test_name: "test"
+  root: "/home/ubuntu/COCO"
+  train_name: "train2017"
+  val_name: "val2017"
+  test_name: null
   image_size: [512, 512, 3]
 Model:
   backbone:
-    name: "resnet_34"
+    name: "resnet_50"
     pretrained: True
     freeze_bn: True
   anchors:
@@ -42,8 +42,8 @@ Model:
         params:
           beta: 0.1
 Trainer:
-  logdir: "./logs"
-  num_epochs: 30
+  logdir: "/home/ubuntu/coco_logs"
+  num_epochs: 100
   batch_size:
     train: 32
     val: 32
@@ -57,7 +57,7 @@ Trainer:
   scheduler:
     name: "torch.optim.lr_scheduler.OneCycleLR"
     params:
-      max_lr: 1e-5
+      max_lr: 1e-3
       anneal_strategy: 'cos'
       pct_start: 1e-5
       div_factor: 10

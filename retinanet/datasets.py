@@ -48,12 +48,12 @@ class DataModule(pl.LightningDataModule):
             )
 
     def _register_paths(self):
-        if self.image_dir.joinpath("train").is_dir():
-            self.train_image_dir = self.image_dir.joinpath("train")
-            if self.image_dir.joinpath("val").is_dir():
-                self.val_image_dir = self.image_dir.joinpath("val")
-            if self.image_dir.joinpath("test").is_dir():
-                self.test_image_dir = self.image_dir.joinpath("test")
+        if self.image_dir.joinpath(self.train_name).is_dir():
+            self.train_image_dir = self.image_dir.joinpath(self.train_name)
+            if self.image_dir.joinpath(self.val_name).is_dir():
+                self.val_image_dir = self.image_dir.joinpath(self.val_name)
+            if self.image_dir.joinpath(self.test_name).is_dir():
+                self.test_image_dir = self.image_dir.joinpath(self.test_name)
         else:
             self.train_image_dir = self.image_dir
             self.val_image_dir = self.image_dir
