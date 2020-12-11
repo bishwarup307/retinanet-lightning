@@ -135,29 +135,6 @@ class RetinaNet(pl.LightningModule):
         self.regression.block[-1].weight.data.fill_(0)
         self.regression.block[-1].bias.data.fill_(0)
 
-        # TODO: save all hparams except anchors
-        # self.save_hyperparameters(
-        #     "backbone",
-        #     "num_classes",
-        #     "pretrained_backbone",
-        #     "channels",
-        #     "num_priors",
-        #     "fpn_upsample",
-        #     "classification_head_num_repeats",
-        #     "regression_head_num_repeats",
-        #     "head_activation",
-        #     "classification_head_use_bn",
-        #     "regression_head_use_bn",
-        #     "backbone_freeze_bn",
-        #     "focal_loss_alpha",
-        #     "focal_loss_gamma",
-        #     "l1_loss_beta",
-        #     "image_size",
-        #     "classification_bias_prior",
-        #     "batch_size",
-        #     "epochs",
-        # )
-
     def _forward_classification_head(
         self, logits: torch.Tensor, gt_cls: torch.Tensor
     ) -> torch.Tensor:
@@ -276,45 +253,27 @@ class RetinaNet(pl.LightningModule):
         self._log_coco_results(stats)
 
     def test_step(self, batch, batch_idx):
-        img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
-        (
-            cls_loss,
-            reg_loss,
-            nms_image_idx,
-            nms_bboxes,
-            nms_classes,
-            nms_scores,
-        ) = self._nms_forward(img, gt_boxes, gt_cls)
-
-        self._update_trackers(
-            image_ids[nms_image_idx],
-            nms_bboxes,
-            nms_scores,
-            nms_classes,
-            scales[nms_image_idx],
-            offset_x[nms_image_idx],
-            offset_y[nms_image_idx],
-        )
-
-        return {
-            "cls_loss": cls_loss,
-            "reg_loss": reg_loss,
+        metrics = self.validation_step(batch, batch_idx)
+        metrics = {
+            "cls_loss": metrics["cls_loss"],
+            "reg_loss": metrics["reg_loss"],
         }
-#         metrics = self.validation_step(batch, batch_idx)
-#         metrics = {
-#             "cls_loss": metrics["cls_loss"],
-#             "reg_loss": metrics["reg_loss"],
-#         }
-#         return metrics
+        return metrics
 
     def test_epoch_end(self, outputs: List[Any]) -> None:
         avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
         avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
+        metrics = {
+            "test/cls_loss": avg_cls_loss,
+            "test/reg_loss": avg_reg_loss,
+        }
+        self.log_dict(metrics, sync_dist=True)
         self._adjust_scales_offsets()
         self._sync_processes()
-        self.coco_eval(save_name=self.test_preds)
-        logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
-        logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
+        stats = self.coco_eval(save_name=self.test_preds)
+        self._log_coco_results(stats, stage = "test")
+#         logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
+#         logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
 
     def _sync_processes(self):
         boxes = self.boxes.detach().cpu().numpy()
@@ -432,14 +391,14 @@ class RetinaNet(pl.LightningModule):
         self.boxes = self.boxes / self.scales[:, None]
 
     @rank_zero_only
-    def _log_coco_results(self, stats):
+    def _log_coco_results(self, stats, stage = "eval"):
         map_avg, map_50, map_75, map_small, map_medium, map_large, *_ = stats
-        self.log("COCO/mAP@0.5:0.95:0.05", map_avg)
-        self.log("COCO/mAP@0.5", map_50)
-        self.log("COCO/mAP@0.75", map_75)
-        self.log("COCO/mAP_small", map_small)
-        self.log("COCO/mAP_medium", map_medium)
-        self.log("COCO/mAP_large", map_large)
+        self.log(f"COCO_{stage}/mAP@0.5:0.95:0.05", map_avg)
+        self.log(f"COCO_{stage}/mAP@0.5", map_50)
+        self.log(f"COCO_{stage}/mAP@0.75", map_75)
+        self.log(f"COCO_{stage}/mAP_small", map_small)
+        self.log(f"COCO_{stage}/mAP_medium", map_medium)
+        self.log(f"COCO_{stage}/mAP_large", map_large)
 
     def configure_optimizers(self):
 #         optimizer = ifnone(

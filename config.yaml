@@ -73,7 +73,7 @@ Trainer:
   callbacks:
     checkpoint:
       enabled: True
-      save_top_k: 1
+      save_top_k: 3
       monitor: 'val_loss'
       mode: 'auto'
       verbose: False
