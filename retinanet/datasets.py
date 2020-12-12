@@ -23,8 +23,7 @@ from omegaconf import DictConfig
 
 class DataModule(pl.LightningDataModule):
     def __init__(
-        self,
-        cfg: DictConfig,
+        self, cfg: DictConfig,
     ):
         super(DataModule, self).__init__()
         if cfg.Dataset.dataset != "coco":
@@ -166,11 +165,7 @@ class CocoDataset(Dataset):
         except TypeError:
             self.normalize_mean, self.normalize_std = (
                 [0.485, 0.456, 0.406],
-                [
-                    0.229,
-                    0.224,
-                    0.225,
-                ],
+                [0.229, 0.224, 0.225,],
             )
 
         self.coco = COCO(json_path)

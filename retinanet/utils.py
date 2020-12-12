@@ -193,6 +193,7 @@ def coco_to_preds(coco: Any):
                 results[filename] = [record]
     return results
 
+
 # https://github.com/pytorch/vision/blob/e337103f2c222528f505772f1289dfee06117de4/references/detection/utils.py#L75
 def all_gather(data):
     """
@@ -225,7 +226,9 @@ def all_gather(data):
     for _ in size_list:
         tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device="cuda"))
     if local_size != max_size:
-        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device="cuda")
+        padding = torch.empty(
+            size=(max_size - local_size,), dtype=torch.uint8, device="cuda"
+        )
         tensor = torch.cat((tensor, padding), dim=0)
     dist.all_gather(tensor_list, tensor)
 
@@ -235,6 +238,7 @@ def all_gather(data):
         data_list.append(pickle.loads(buffer))
 
     return data_list
+
 
 def is_dist_avail_and_initialized():
     if not dist.is_available():

@@ -15,12 +15,19 @@ from retinanet import utils
 class Resizer:
     """Convert ndarrays in sample to Tensors."""
 
-    def __init__(self, size: Tuple[int, int]):
+    def __init__(self, size: Tuple[int, int], resize_mode: str = "letterbox"):
+        if resize_mode not in ("letterbox", "min_max"):
+            raise ValueError(
+                f"`resize_mode` should be either `letterbox` or `min_max`, got {resize_mode}"
+            )
         self.size = size
+        self.resize_fn = {"letterbox": letterbox, "min_max": min_max_resize}[
+            resize_mode
+        ]
 
     def __call__(self, sample) -> Dict:
         image, annots = sample["img"], sample["annot"]
-        rsz_img, scale, offset_x, offset_y = letterbox(image, self.size)
+        rsz_img, scale, offset_x, offset_y = self.resize_fn(image, self.size)
 
         annots[:, :4] *= scale
         annots[:, 0] += offset_x
@@ -150,6 +157,16 @@ class Augmenter:
 
 
 def letterbox(image: np.ndarray, expected_size: Tuple[int, int], fill_value: int = 0):
+    """
+    Choose the smaller scale between width and height maintaining the AR. pad the other side to meet
+    the expected size.
+    Args:
+        image (np.ndarray): image
+        expected_size (Tuple[int, int]): expected image size (height, width)
+        fill_value (int): padding fill
+
+    Returns: Tuple[np.ndarray, float, float, float]. in the order (resized_image, scale, offset_x, offset_y)
+    """
     ih, iw, _ = image.shape
     eh, ew = expected_size
     scale = min(eh / ih, ew / iw)
@@ -163,3 +180,47 @@ def letterbox(image: np.ndarray, expected_size: Tuple[int, int], fill_value: int
 
     new_img[offset_y : offset_y + nh, offset_x : offset_x + nw, :] = image.copy()
     return new_img, scale, offset_x, offset_y
+
+
+def min_max_resize(image: np.ndarray, sizes: Tuple[int, int]):
+    """
+    The images are rescaled (by default) such that the smallest side equals min(sizes). If the largest side is
+    then still larger than max(sizes) pixels, it is scaled down further such that the largest side is equal
+    to max(sizes) pixels.
+    Args:
+        image (np.ndarray):
+        sizes (Tuple[int, int]): (min_size, max_size)
+
+    Returns: Tuple[np.ndarray, float, float, float]. in the order (resized_image, scale, offset_x, offset_y)
+                the offsets are zero in this case but included in the fn to have cosistent API with
+                letterbox.
+    """
+    offset_x, offset_y = 0, 0
+    min_size, max_size = sizes
+    rows, cols, cns = image.shape
+    smallest_side = min(rows, cols)
+
+    # rescale the image so the smallest side is min_side
+    scale = min_size / smallest_side
+
+    # check if the largest side is now greater than max_side, which can happen
+    # when images have a large aspect ratio
+    largest_side = max(rows, cols)
+
+    if largest_side * scale > max_size:
+        scale = max_size / largest_side
+
+    # resize the image with the computed scale
+    image = cv2.resize(
+        image,
+        (int(round(rows * scale)), int(round((cols * scale)))),
+        interpolation=cv2.INTER_CUBIC,
+    )
+    rows, cols, cns = image.shape
+
+    pad_w = (32 - rows % 32) % 32
+    pad_h = (32 - cols % 32) % 32
+
+    new_image = np.zeros((rows + pad_w, cols + pad_h, cns)).astype(np.uint8)
+    new_image[:rows, :cols, :] = image
+    return new_image, scale, offset_x, offset_y

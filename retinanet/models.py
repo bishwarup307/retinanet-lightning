@@ -8,17 +8,18 @@ import math
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Tuple
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-import apex
 from omegaconf import DictConfig
-import numpy as np
-from coco.cocoeval import COCOeval
+
+from pytorch_lightning import _logger as logger
 from pytorch_lightning.utilities import rank_zero_only
 
+from coco.cocoeval import COCOeval
 from retinanet.anchors import MultiBoxPrior
 from retinanet.losses import FocalLoss
 from retinanet.utils import (
@@ -26,15 +27,20 @@ from retinanet.utils import (
     ifnone,
     xyxy_to_ccwh,
     load_obj,
-    get_logger,
     get_total_steps,
     to_tensor,
     all_gather,
     coco_to_preds,
 )
-from retinanet.lamb import Lamb
-# logger = get_logger(__name__)
-from pytorch_lightning import _logger as logger
+
+
+has_apex = False
+try:
+    import apex
+
+    has_apex = True
+except ModuleNotFoundError:
+    pass
 
 
 class RetinaNet(pl.LightningModule):
@@ -120,7 +126,7 @@ class RetinaNet(pl.LightningModule):
         prior_std = ifnone(cfg.Model.anchors.prior_std, [0.1, 0.1, 0.2, 0.2])
         self.register_buffer("prior_mean", to_tensor(prior_mean))
         self.register_buffer("prior_std", to_tensor(prior_std))
-        
+
         self.dist = cfg.Trainer.gpus > 1 and torch.cuda.device_count() > 1
 
         self.fpn.apply(init_weights)
@@ -273,21 +279,22 @@ class RetinaNet(pl.LightningModule):
         self._adjust_scales_offsets()
         self._sync_processes()
         stats = self.coco_eval(save_name=self.test_preds)
-        self._log_coco_results(stats, stage = "test")
-#         logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
-#         logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
+        self._log_coco_results(stats, stage="test")
+
+    #         logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
+    #         logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
 
     def _sync_processes(self):
         boxes = self.boxes.detach().cpu().numpy()
         image_ids = self.image_ids.detach().cpu().numpy()
         scores = self.scores.detach().cpu().numpy()
         class_ids = self.class_idx.detach().cpu().numpy()
-        
+
         bb_sync = all_gather(boxes)
         imageid_sync = all_gather(image_ids)
         scores_sync = all_gather(scores)
         classids_sync = all_gather(class_ids)
-        
+
         k = zip(
             np.concatenate(bb_sync).tolist(),
             np.concatenate(imageid_sync).tolist(),
@@ -299,35 +306,34 @@ class RetinaNet(pl.LightningModule):
         ]
         self.coco_res = coco_res
 
-
     @rank_zero_only
     def coco_eval(self, save_name: Optional[str] = None):
-#         boxes = self.boxes.detach().cpu().numpy()
-#         image_ids = self.image_ids.detach().cpu().numpy()
-#         scores = self.scores.detach().cpu().numpy()
-#         class_ids = self.class_idx.detach().cpu().numpy()
-# #         print(len(boxes))
-# #         print(f"gpu box shapes: {boxes.shape}")
-# #         print(f"gpu image_id shapes: {image_ids.shape}")
-#         bb_sync = all_gather(boxes)
-#         imageid_sync = all_gather(image_ids)
-#         scores_sync = all_gather(scores)
-#         classids_sync = all_gather(class_ids)
-        
-# #         print(f"all gather box shapes: {[x.shape for x in bb]}")
-# #         print(f"all gather box cat: {np.concatenate(bb).shape}")
-# #         print(f"all gather image_id shapes: {[x.shape for x in imid]}")
-# #         print(f"all gather image_id cat: {np.concatenate(imid).shape}")
-# #         boxes, image_ids, scores, class_ids = self._run_all_gather()
-#         k = zip(
-#             np.concatenate(bb_sync).tolist(),
-#             np.concatenate(imageid_sync).tolist(),
-#             np.concatenate(scores_sync).tolist(),
-#             list(map(self.coco_labels.get, np.concatenate(classids_sync).tolist())),
-#         )
-#         coco_res = [
-#             dict(zip(["bbox", "image_id", "score", "category_id"], p)) for p in k
-#         ]
+        #         boxes = self.boxes.detach().cpu().numpy()
+        #         image_ids = self.image_ids.detach().cpu().numpy()
+        #         scores = self.scores.detach().cpu().numpy()
+        #         class_ids = self.class_idx.detach().cpu().numpy()
+        # #         print(len(boxes))
+        # #         print(f"gpu box shapes: {boxes.shape}")
+        # #         print(f"gpu image_id shapes: {image_ids.shape}")
+        #         bb_sync = all_gather(boxes)
+        #         imageid_sync = all_gather(image_ids)
+        #         scores_sync = all_gather(scores)
+        #         classids_sync = all_gather(class_ids)
+
+        # #         print(f"all gather box shapes: {[x.shape for x in bb]}")
+        # #         print(f"all gather box cat: {np.concatenate(bb).shape}")
+        # #         print(f"all gather image_id shapes: {[x.shape for x in imid]}")
+        # #         print(f"all gather image_id cat: {np.concatenate(imid).shape}")
+        # #         boxes, image_ids, scores, class_ids = self._run_all_gather()
+        #         k = zip(
+        #             np.concatenate(bb_sync).tolist(),
+        #             np.concatenate(imageid_sync).tolist(),
+        #             np.concatenate(scores_sync).tolist(),
+        #             list(map(self.coco_labels.get, np.concatenate(classids_sync).tolist())),
+        #         )
+        #         coco_res = [
+        #             dict(zip(["bbox", "image_id", "score", "category_id"], p)) for p in k
+        #         ]
 
         gt = copy.deepcopy(self.val_coco_gt)
         dt = gt.loadRes(self.coco_res)
@@ -393,7 +399,7 @@ class RetinaNet(pl.LightningModule):
         self.boxes = self.boxes / self.scales[:, None]
 
     @rank_zero_only
-    def _log_coco_results(self, stats, stage = "eval"):
+    def _log_coco_results(self, stats, stage="eval"):
         map_avg, map_50, map_75, map_small, map_medium, map_large, *_ = stats
         self.log(f"COCO_{stage}/mAP@0.5:0.95:0.05", map_avg)
         self.log(f"COCO_{stage}/mAP@0.5", map_50)
@@ -403,17 +409,21 @@ class RetinaNet(pl.LightningModule):
         self.log(f"COCO_{stage}/mAP_large", map_large)
 
     def configure_optimizers(self):
-        if self.dist:
+        if self.dist and has_apex:
             logger.info("Training with DDP")
-            optimizer = apex.optimizers.FusedLAMB(self.parameters(), lr = 1e-3, weight_decay=0.01)
+            optimizer = apex.optimizers.FusedLAMB(
+                self.parameters(), lr=1e-3, weight_decay=0.01
+            )
         else:
             optimizer = ifnone(
-                load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
+                load_obj(self.optimizer.name)(
+                    self.parameters(), **self.optimizer.params
+                ),
                 torch.optim.Adam(self.parameters(), lr=1e-5),
             )
             logger.info("Optimizer: adam")
 
-#         optimizer = torch.optim.Adam(self.parameters(), lr=3e-4)
+        #         optimizer = torch.optim.Adam(self.parameters(), lr=3e-4)
         scheduler = load_obj(self.scheduler.name)(
             optimizer, total_steps=self.total_steps, **self.scheduler.params
         )
