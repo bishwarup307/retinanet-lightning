@@ -411,7 +411,9 @@ class RetinaNet(pl.LightningModule):
                 load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
                 torch.optim.Adam(self.parameters(), lr=1e-5),
             )
-#             logger.info("Optimizer: adam")
+            logger.info("Optimizer: adam")
+
+#         optimizer = torch.optim.Adam(self.parameters(), lr=3e-4)
         scheduler = load_obj(self.scheduler.name)(
             optimizer, total_steps=self.total_steps, **self.scheduler.params
         )

@@ -20,10 +20,10 @@ Model:
   FPN:
     pyramid_levels: [3, 4, 5, 6, 7]
     channels: 256
-    upsample: "bilinear"
+    upsample: "nearest"
   head:
     classification:
-      num_classes: 1
+      num_classes: 80
       n_repeat: 4
       use_bn: False
       activation: 'relu'
@@ -45,9 +45,9 @@ Trainer:
   logdir: "/home/ubuntu/coco_logs"
   num_epochs: 100
   batch_size:
-    train: 32
-    val: 32
-    test: 32
+    train: 16
+    val: 16
+    test: 16
   optimizer:
     name: "torch.optim.Adam"
     params:
@@ -59,9 +59,9 @@ Trainer:
     params:
       max_lr: 1e-3
       anneal_strategy: 'cos'
-      pct_start: 1e-5
+      pct_start: 0.02
       div_factor: 10
-      final_div_factor: 1e4
+      final_div_factor: 1e2
   tpus: 0
   gpus: 4
   dist_backend: 'ddp'
