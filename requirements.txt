@@ -1,0 +1,11 @@
+pycocotools==2.0.2
+opencv_python_headless==4.4.0.46
+numpy==1.19.2
+albumentations>=0.5.1
+omegaconf==2.0.5
+matplotlib==3.3.2
+torch>=1.6.0
+colorama==0.4.4
+torchvision>=0.8.1
+pytorch_lightning>=1.0.7
+Pillow==8.0.1
