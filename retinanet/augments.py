@@ -16,19 +16,14 @@ class Resizer:
     """Convert ndarrays in sample to Tensors."""
 
     def __init__(self, size: Tuple[int, int], resize_mode: str = "letterbox"):
-        if resize_mode not in ("letterbox", "min_max"):
-            raise ValueError(
-                f"`resize_mode` should be either `letterbox` or `min_max`, got {resize_mode}"
-            )
+        if resize_mode not in ("letterbox", "minmax"):
+            raise ValueError(f"`resize_mode` should be either `letterbox` or `minmax`, got {resize_mode}")
         self.size = size
-        self.resize_fn = {"letterbox": letterbox, "min_max": min_max_resize}[
-            resize_mode
-        ]
+        self.resize_fn = {"letterbox": letterbox, "minmax": min_max_resize}[resize_mode]
 
     def __call__(self, sample) -> Dict:
         image, annots = sample["img"], sample["annot"]
         rsz_img, scale, offset_x, offset_y = self.resize_fn(image, self.size)
-
         annots[:, :4] *= scale
         annots[:, 0] += offset_x
         annots[:, 1] += offset_y
@@ -57,9 +52,7 @@ class Normalizer:
 
 
 class UnNormalizer:
-    def __init__(
-        self, mean: Optional[List[float]] = None, std: Optional[List[float]] = None
-    ):
+    def __init__(self, mean: Optional[List[float]] = None, std: Optional[List[float]] = None):
         self.mean = utils.ifnone(mean, [0.485, 0.456, 0.406])
         self.std = utils.ifnone(std, [0.229, 0.224, 0.225])
 
@@ -114,17 +107,10 @@ class Augmenter:
 
             if name == "rgb_shift":
                 augs.append(
-                    A.RGBShift(
-                        r_shift_limit=params[0],
-                        g_shift_limit=params[1],
-                        b_shift_limit=params[2],
-                        p=params[3],
-                    )
+                    A.RGBShift(r_shift_limit=params[0], g_shift_limit=params[1], b_shift_limit=params[2], p=params[3],)
                 )
             if name == "cutout":
-                augs.append(
-                    A.Cutout(max_h_size=params[0], max_w_size=params[1], p=params[2])
-                )
+                augs.append(A.Cutout(max_h_size=params[0], max_w_size=params[1], p=params[2]))
         trsf = A.Compose(
             augs,
             bbox_params=A.BboxParams(
@@ -134,18 +120,10 @@ class Augmenter:
                 min_area=self.transforms["min_area"],
             ),
         )
-        transformed = trsf(
-            image=sample["img"],
-            bboxes=sample["annot"][:, :-1],
-            category_ids=sample["annot"][:, -1],
-        )
+        transformed = trsf(image=sample["img"], bboxes=sample["annot"][:, :-1], category_ids=sample["annot"][:, -1],)
         if len(transformed["bboxes"]):
             annot = np.concatenate(
-                [
-                    np.array(transformed["bboxes"]),
-                    np.array(transformed["category_ids"])[..., np.newaxis],
-                ],
-                axis=1,
+                [np.array(transformed["bboxes"]), np.array(transformed["category_ids"])[..., np.newaxis],], axis=1,
             )
         else:
             annot = np.array([])
@@ -209,13 +187,8 @@ def min_max_resize(image: np.ndarray, sizes: Tuple[int, int]):
 
     if largest_side * scale > max_size:
         scale = max_size / largest_side
-
     # resize the image with the computed scale
-    image = cv2.resize(
-        image,
-        (int(round(rows * scale)), int(round((cols * scale)))),
-        interpolation=cv2.INTER_CUBIC,
-    )
+    image = cv2.resize(image, (int(round((cols * scale))), int(round(rows * scale))), interpolation=cv2.INTER_CUBIC)
     rows, cols, cns = image.shape
 
     pad_w = (32 - rows % 32) % 32

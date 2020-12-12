@@ -27,9 +27,7 @@ class DataModule(pl.LightningDataModule):
     ):
         super(DataModule, self).__init__()
         if cfg.Dataset.dataset != "coco":
-            print(
-                f"only COCO dataset is supported at present, got {cfg.Dataset.dataset}"
-            )
+            print(f"only COCO dataset is supported at present, got {cfg.Dataset.dataset}")
             raise NotImplementedError
         self.cfg = cfg
         self.image_dir = Path(cfg.Dataset.root) / "images"
@@ -42,9 +40,7 @@ class DataModule(pl.LightningDataModule):
         self.label_ext = "json" if cfg.Dataset.dataset == "coco" else None
         self._register_paths()
         if self.train_label_path is None:
-            raise IOError(
-                f"Could not load {self.train_label_path}, no such file on disk."
-            )
+            raise IOError(f"Could not load {self.train_label_path}, no such file on disk.")
 
     def _register_paths(self):
         if self.image_dir.joinpath(self.train_name).is_dir():
@@ -58,22 +54,14 @@ class DataModule(pl.LightningDataModule):
             self.val_image_dir = self.image_dir
             self.test_image_dir = self.image_dir
 
-        self.train_label_path = isfile(
-            self.annotation_dir.joinpath(f"{self.train_name}.{self.label_ext}")
-        )
-        self.val_label_path = isfile(
-            self.annotation_dir.joinpath(f"{self.val_name}.{self.label_ext}")
-        )
-        self.test_label_path = isfile(
-            self.annotation_dir.joinpath(f"{self.test_name}.{self.label_ext}")
-        )
+        self.train_label_path = isfile(self.annotation_dir.joinpath(f"{self.train_name}.{self.label_ext}"))
+        self.val_label_path = isfile(self.annotation_dir.joinpath(f"{self.val_name}.{self.label_ext}"))
+        self.test_label_path = isfile(self.annotation_dir.joinpath(f"{self.test_name}.{self.label_ext}"))
 
     def setup(self, stage: Optional[str] = None):
         if stage == "fit" or stage is None:
             self.train_dataset = CocoDataset(
-                image_dir=self.train_image_dir,
-                json_path=self.train_label_path,
-                image_size=self.image_size,
+                image_dir=self.train_image_dir, json_path=self.train_label_path, image_size=self.image_size,
             )
             self.num_classes = len(self.train_dataset.coco.getCatIds())
             self.anchors = self.train_dataset.anchors
@@ -150,6 +138,7 @@ class CocoDataset(Dataset):
         image_size: Tuple[int, int],
         normalize: Optional[Dict] = None,
         transform: Optional[List[Callable]] = None,
+        resize_mode: Optional[str] = "letterbox",
         train: bool = True,
         nsr: float = None,
     ):
@@ -172,6 +161,7 @@ class CocoDataset(Dataset):
         self.image_ids = self.coco.getImgIds()
         self.return_ids = not train
         self.nsr = nsr if nsr is not None else 1.0
+        self.resize_mode = resize_mode
 
         self.classes = {}
         self.labels = {}
@@ -192,9 +182,10 @@ class CocoDataset(Dataset):
         # albumentation complains if bbox coordinates are equal to image shape in
         # either dimensions
         # https://github.com/albumentations-team/albumentations/issues/459
+        h, w = sample["img"].shape[:2]
         annots = sample["annot"]
-        annots[:, 0:4:2] = annots[:, 0:4:2].clip(1, self.image_size[0])
-        annots[:, 1:4:2] = annots[:, 1:4:2].clip(1, self.image_size[1])
+        annots[:, 0:4:2] = annots[:, 0:4:2].clip(1, w)
+        annots[:, 1:4:2] = annots[:, 1:4:2].clip(1, h)
         sample["annot"] = annots
         return sample
 
@@ -204,7 +195,7 @@ class CocoDataset(Dataset):
         annot = self._load_annotations(idx)
         sample = {"img": img, "annot": annot}
         if self.image_size is not None:
-            resize = Resizer(self.image_size)  # resize
+            resize = Resizer(self.image_size, resize_mode=self.resize_mode)  # resize
             sample = resize(sample)
 
         sample = self._clip_annotations(sample)
@@ -258,9 +249,7 @@ class CocoDataset(Dataset):
 
     def _load_annotations(self, image_index):
         # get ground truth annotations
-        annotations_ids = self.coco.getAnnIds(
-            imgIds=self.image_ids[image_index], iscrowd=False
-        )
+        annotations_ids = self.coco.getAnnIds(imgIds=self.image_ids[image_index], iscrowd=False)
         annotations = np.zeros((0, 5))
 
         # some images appear to miss annotations (like image with id 257034)
@@ -293,9 +282,7 @@ class CocoDataset(Dataset):
         sample["img"] = torch.from_numpy(sample["img"].astype(np.float32))
         sample["annot"] = torch.from_numpy(sample["annot"].astype(np.float32))
         # if self.train:
-        gt_boxes, gt_cls = get_anchor_labels(
-            self.anchors, sample["annot"][:, :4], sample["annot"][:, 4]
-        )
+        gt_boxes, gt_cls = get_anchor_labels(self.anchors, sample["annot"][:, :4], sample["annot"][:, 4])
         if self.train:
             return sample["img"].permute(2, 0, 1).contiguous(), gt_boxes, gt_cls
         return (

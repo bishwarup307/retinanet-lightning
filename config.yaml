@@ -4,6 +4,7 @@ Dataset:
   train_name: "train2017"
   val_name: "val2017"
   test_name: null
+  resize_mode: "minmax"
   image_size: [480, 640, 3]
 Model:
   backbone:
