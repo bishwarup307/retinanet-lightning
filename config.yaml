@@ -4,8 +4,7 @@ Dataset:
   train_name: "train2017"
   val_name: "val2017"
   test_name: null
-  resize_mode: "minmax"
-  image_size: [480, 640, 3]
+  image_size: [640, 800, 3]
 Model:
   backbone:
     name: "resnet_50"
@@ -52,13 +51,12 @@ Trainer:
   optimizer:
     name: "torch.optim.Adam"
     params:
-      lr: 1e-5
       betas: [0.9, 0.999]
       weight_decay: 1e-6
   scheduler:
     name: "torch.optim.lr_scheduler.OneCycleLR"
     params:
-      max_lr: 1e-3
+      max_lr: 1e-5
       anneal_strategy: 'cos'
       pct_start: 0.02
       div_factor: 10

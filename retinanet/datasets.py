@@ -23,7 +23,8 @@ from omegaconf import DictConfig
 
 class DataModule(pl.LightningDataModule):
     def __init__(
-        self, cfg: DictConfig,
+        self,
+        cfg: DictConfig,
     ):
         super(DataModule, self).__init__()
         if cfg.Dataset.dataset != "coco":
@@ -61,7 +62,9 @@ class DataModule(pl.LightningDataModule):
     def setup(self, stage: Optional[str] = None):
         if stage == "fit" or stage is None:
             self.train_dataset = CocoDataset(
-                image_dir=self.train_image_dir, json_path=self.train_label_path, image_size=self.image_size,
+                image_dir=self.train_image_dir,
+                json_path=self.train_label_path,
+                image_size=self.image_size,
             )
             self.num_classes = len(self.train_dataset.coco.getCatIds())
             self.anchors = self.train_dataset.anchors
@@ -138,7 +141,6 @@ class CocoDataset(Dataset):
         image_size: Tuple[int, int],
         normalize: Optional[Dict] = None,
         transform: Optional[List[Callable]] = None,
-        resize_mode: Optional[str] = "letterbox",
         train: bool = True,
         nsr: float = None,
     ):
@@ -154,14 +156,17 @@ class CocoDataset(Dataset):
         except TypeError:
             self.normalize_mean, self.normalize_std = (
                 [0.485, 0.456, 0.406],
-                [0.229, 0.224, 0.225,],
+                [
+                    0.229,
+                    0.224,
+                    0.225,
+                ],
             )
 
         self.coco = COCO(json_path)
         self.image_ids = self.coco.getImgIds()
         self.return_ids = not train
         self.nsr = nsr if nsr is not None else 1.0
-        self.resize_mode = resize_mode
 
         self.classes = {}
         self.labels = {}
@@ -195,7 +200,7 @@ class CocoDataset(Dataset):
         annot = self._load_annotations(idx)
         sample = {"img": img, "annot": annot}
         if self.image_size is not None:
-            resize = Resizer(self.image_size, resize_mode=self.resize_mode)  # resize
+            resize = Resizer(self.image_size)  # resize
             sample = resize(sample)
 
         sample = self._clip_annotations(sample)
@@ -317,3 +322,24 @@ def list_collate(batch: List):
         offset_y,
         image_ids,
     )
+
+
+def collater(batch: List):
+    imgs = [b[0] for b in batch]
+    boxes = [b[1] for b in batch]
+    classes = [b[2] for b in batch]
+
+    heights = [int(s.shape[1]) for s in imgs]
+    widths = [int(s.shape[2]) for s in imgs]
+    batch_size = len(imgs)
+
+    max_width, max_height = max(widths), max(heights)
+    batch_imgs = torch.zeros(batch_size, 3, max_height, max_width)
+
+    for i in range(batch_size):
+        img = imgs[i]
+        batch_imgs[i, :, : int(img.shape[1]), : int(img.shape[2])] = img
+
+    batch_boxes = torch.stack(boxes)
+    batch_classes = torch.stack(classes)
+    return batch_imgs, batch_boxes, batch_classes
