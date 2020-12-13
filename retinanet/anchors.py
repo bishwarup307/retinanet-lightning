@@ -65,7 +65,8 @@ class MultiBoxPrior(nn.Module):
     @torch.no_grad()
     def forward(self, image):
         im_hw = np.array(image.size()[2:])
-        fmap_sizes = [tuple(im_hw // x) for x in self.strides]
+#         fmap_sizes = [tuple(im_hw // x) for x in self.strides]
+        fmap_sizes = [tuple(np.ceil(im_hw / x).astype(int)) for x in self.strides]
 
         all_anchors = []
         for (level, size, stride, fmap_size) in zip(

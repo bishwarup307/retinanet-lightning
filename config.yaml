@@ -1,13 +1,13 @@
 Dataset:
   dataset: coco
-  root: "/mydataset"
-  train_name: "train"
-  val_name: "val"
-  test_name: "test"
-  image_size: [512, 512, 3]
+  root: "/home/ubuntu/COCO"
+  train_name: "train2017"
+  val_name: "val2017"
+  test_name: null
+  image_size: [640, 800, 3]
 Model:
   backbone:
-    name: "resnet_34"
+    name: "resnet_50"
     pretrained: True
     freeze_bn: True
   anchors:
@@ -20,10 +20,10 @@ Model:
   FPN:
     pyramid_levels: [3, 4, 5, 6, 7]
     channels: 256
-    upsample: "bilinear"
+    upsample: "nearest"
   head:
     classification:
-      num_classes: 1
+      num_classes: 80
       n_repeat: 4
       use_bn: False
       activation: 'relu'
@@ -42,16 +42,15 @@ Model:
         params:
           beta: 0.1
 Trainer:
-  logdir: "./logs"
+  logdir: "/home/ubuntu/coco_logs"
   num_epochs: 100
   batch_size:
-    train: 32
-    val: 32
-    test: 32
+    train: 8
+    val: 8
+    test: 8
   optimizer:
     name: "torch.optim.Adam"
     params:
-      lr: 1e-5
       betas: [0.9, 0.999]
       weight_decay: 1e-6
   scheduler:
@@ -59,21 +58,21 @@ Trainer:
     params:
       max_lr: 1e-5
       anneal_strategy: 'cos'
-      pct_start: 1e-5
+      pct_start: 0.02
       div_factor: 10
-      final_div_factor: 1e4
+      final_div_factor: 1e2
   tpus: 0
   gpus: 4
   dist_backend: 'ddp'
   workers: 4
   clip_grad_norm: 0.1
-  amp: True
+  amp: False
   amp_backend: "native"
   num_sanity_val_steps: 0
   callbacks:
     checkpoint:
       enabled: True
-      save_top_k: 1
+      save_top_k: 3
       monitor: 'val_loss'
       mode: 'auto'
       verbose: False

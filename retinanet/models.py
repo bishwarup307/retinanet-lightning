@@ -8,14 +8,18 @@ import math
 from pathlib import Path
 from typing import Any, List, Optional, Sequence, Tuple
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 from omegaconf import DictConfig
-from pycocotools.cocoeval import COCOeval
 
+from pytorch_lightning import _logger as logger
+from pytorch_lightning.utilities import rank_zero_only
+
+from coco.cocoeval import COCOeval
 from retinanet.anchors import MultiBoxPrior
 from retinanet.losses import FocalLoss
 from retinanet.utils import (
@@ -23,13 +27,20 @@ from retinanet.utils import (
     ifnone,
     xyxy_to_ccwh,
     load_obj,
-    get_logger,
     get_total_steps,
     to_tensor,
+    all_gather,
     coco_to_preds,
 )
 
-logger = get_logger(__name__)
+
+has_apex = False
+try:
+    import apex
+
+    has_apex = True
+except ModuleNotFoundError:
+    pass
 
 
 class RetinaNet(pl.LightningModule):
@@ -42,9 +53,7 @@ class RetinaNet(pl.LightningModule):
     ):
         super(RetinaNet, self).__init__()
         self.save_hyperparameters("cfg")
-        self.backbone = _get_backbone(
-            cfg.Model.backbone.name, pretrained=cfg.Model.backbone.pretrained
-        )
+        self.backbone = _get_backbone(cfg.Model.backbone.name, pretrained=cfg.Model.backbone.pretrained)
         if not cfg.Model.backbone.pretrained:
             self.backbone.apply(init_weights)
         self.num_classes = cfg.Model.head.classification.num_classes
@@ -76,9 +85,7 @@ class RetinaNet(pl.LightningModule):
             gamma=cfg.Model.head.classification.loss.params.gamma,
             reduction="sum",
         )
-        self.regression_loss = nn.SmoothL1Loss(
-            reduction="mean", beta=cfg.Model.head.regression.loss.params.beta
-        )
+        self.regression_loss = nn.SmoothL1Loss(reduction="mean", beta=cfg.Model.head.regression.loss.params.beta)
         self.calculate_bbox = OffsetsToBBox()
         self.nms = NMS()
         # self.anchors = nn.Parameter(anchors, requires_grad=False)
@@ -106,15 +113,14 @@ class RetinaNet(pl.LightningModule):
         self.test_preds = "test" if cfg.Trainer.save_test_predictions else None
         self.optimizer = cfg.Trainer.optimizer
         self.scheduler = cfg.Trainer.scheduler
-        self.total_steps = (
-            get_total_steps(dataset_size, cfg.Trainer.batch_size.train)
-            * cfg.Trainer.num_epochs
-        )
+        self.total_steps = get_total_steps(dataset_size, cfg.Trainer.batch_size.train) * cfg.Trainer.num_epochs
 
         prior_mean = ifnone(cfg.Model.anchors.prior_mean, [0, 0, 0, 0])
         prior_std = ifnone(cfg.Model.anchors.prior_std, [0.1, 0.1, 0.2, 0.2])
         self.register_buffer("prior_mean", to_tensor(prior_mean))
         self.register_buffer("prior_std", to_tensor(prior_std))
+
+        self.effective_batch_size = cfg.Trainer.batch_size.train * cfg.Trainer.gpus
 
         self.fpn.apply(init_weights)
         self.classification.apply(init_weights)
@@ -122,40 +128,12 @@ class RetinaNet(pl.LightningModule):
 
         self.classification.block[-1].weight.data.fill_(0)
         self.classification.block[-1].bias.data.fill_(
-            -math.log(
-                (1.0 - cfg.Model.head.classification.bias_prior)
-                / cfg.Model.head.classification.bias_prior
-            )
+            -math.log((1.0 - cfg.Model.head.classification.bias_prior) / cfg.Model.head.classification.bias_prior)
         )
         self.regression.block[-1].weight.data.fill_(0)
         self.regression.block[-1].bias.data.fill_(0)
 
-        # TODO: save all hparams except anchors
-        # self.save_hyperparameters(
-        #     "backbone",
-        #     "num_classes",
-        #     "pretrained_backbone",
-        #     "channels",
-        #     "num_priors",
-        #     "fpn_upsample",
-        #     "classification_head_num_repeats",
-        #     "regression_head_num_repeats",
-        #     "head_activation",
-        #     "classification_head_use_bn",
-        #     "regression_head_use_bn",
-        #     "backbone_freeze_bn",
-        #     "focal_loss_alpha",
-        #     "focal_loss_gamma",
-        #     "l1_loss_beta",
-        #     "image_size",
-        #     "classification_bias_prior",
-        #     "batch_size",
-        #     "epochs",
-        # )
-
-    def _forward_classification_head(
-        self, logits: torch.Tensor, gt_cls: torch.Tensor
-    ) -> torch.Tensor:
+    def _forward_classification_head(self, logits: torch.Tensor, gt_cls: torch.Tensor) -> torch.Tensor:
         num_pos = (gt_cls > 0).sum(axis=1)
         num_assigned = (gt_cls > -1).sum(axis=1)
 
@@ -167,9 +145,7 @@ class RetinaNet(pl.LightningModule):
         ).float()
         # background class is not used for loss calculation
         # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
-        cls_loss = self.classification_loss(
-            masked_logits, masked_target_one_hot[:, 1:], num_pos, num_assigned
-        )
+        cls_loss = self.classification_loss(masked_logits, masked_target_one_hot[:, 1:], num_pos, num_assigned)
         return cls_loss
 
     def _forward_regression_head(
@@ -192,11 +168,7 @@ class RetinaNet(pl.LightningModule):
         for feature in pyramids:
             cls_pred = self.classification(feature)
             reg_pred = self.regression(feature)
-            cls_pred = (
-                cls_pred.permute(0, 2, 3, 1)
-                .contiguous()
-                .view(t.size(0), -1, self.num_classes)
-            )
+            cls_pred = cls_pred.permute(0, 2, 3, 1).contiguous().view(t.size(0), -1, self.num_classes)
             reg_pred = reg_pred.permute(0, 2, 3, 1).contiguous().view(t.size(0), -1, 4)
             logits.append(cls_pred)
             offsets.append(reg_pred)
@@ -228,19 +200,6 @@ class RetinaNet(pl.LightningModule):
         self._initialize_trackers()
 
     def validation_step(self, batch, batch_idx):
-        # img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
-        #
-        # logits, offsets = self(img)
-        #
-        # cls_loss = self._forward_classification_head(logits, gt_cls)
-        # reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
-        #
-        # pred_boxes = self.calculate_bbox(
-        #     self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
-        # )
-        # nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
-        #     torch.sigmoid(logits), pred_boxes
-        # )
         img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
         (
             cls_loss,
@@ -277,13 +236,9 @@ class RetinaNet(pl.LightningModule):
             "val/reg_loss": avg_reg_loss,
             "val_loss": val_loss,
         }
-        self.log_dict(metrics)
+        self.log_dict(metrics, sync_dist=True)
         self._adjust_scales_offsets()
-        # self.boxes[:, 2] = self.boxes[:, 2] - self.boxes[:, 0]
-        # self.boxes[:, 3] = self.boxes[:, 3] - self.boxes[:, 1]
-        # self.boxes[:, 0] = self.boxes[:, 0] - self.offset_x
-        # self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
-        # self.boxes = self.boxes / self.scales[:, None]
+        self._sync_processes()
         stats = self.coco_eval(save_name=self.val_preds)
         self._log_coco_results(stats)
 
@@ -298,34 +253,46 @@ class RetinaNet(pl.LightningModule):
     def test_epoch_end(self, outputs: List[Any]) -> None:
         avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
         avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
+        metrics = {
+            "test/cls_loss": avg_cls_loss,
+            "test/reg_loss": avg_reg_loss,
+        }
+        self.log_dict(metrics, sync_dist=True)
         self._adjust_scales_offsets()
-        self.coco_eval(save_name=self.test_preds)
-        logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
-        logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
+        self._sync_processes()
+        stats = self.coco_eval(save_name=self.test_preds)
+        self._log_coco_results(stats, stage="test")
 
-    def coco_eval(self, save_name: Optional[str] = None):
+    #         logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
+    #         logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
+
+    def _sync_processes(self):
         boxes = self.boxes.detach().cpu().numpy()
         image_ids = self.image_ids.detach().cpu().numpy()
         scores = self.scores.detach().cpu().numpy()
         class_ids = self.class_idx.detach().cpu().numpy()
 
-        k = zip(
-            boxes.tolist(),
-            image_ids.tolist(),
-            scores.tolist(),
-            list(map(self.coco_labels.get, class_ids.tolist())),
-        )
-        coco_res = [
-            dict(zip(["bbox", "image_id", "score", "category_id"], p)) for p in k
-        ]
+        bb_sync = all_gather(boxes)
+        imageid_sync = all_gather(image_ids)
+        scores_sync = all_gather(scores)
+        classids_sync = all_gather(class_ids)
 
+        k = zip(
+            np.concatenate(bb_sync).tolist(),
+            np.concatenate(imageid_sync).tolist(),
+            np.concatenate(scores_sync).tolist(),
+            list(map(self.coco_labels.get, np.concatenate(classids_sync).tolist())),
+        )
+        coco_res = [dict(zip(["bbox", "image_id", "score", "category_id"], p)) for p in k]
+        self.coco_res = coco_res
+
+    @rank_zero_only
+    def coco_eval(self, save_name: Optional[str] = None):
         gt = copy.deepcopy(self.val_coco_gt)
-        dt = gt.loadRes(coco_res)
+        dt = gt.loadRes(self.coco_res)
         if save_name is not None:
             predictions = coco_to_preds(dt)
-            with open(
-                Path(self.logger.log_dir).joinpath(f"{save_name}_predictions.json"), "w"
-            ) as f:
+            with open(Path(self.logger.log_dir).joinpath(f"{save_name}_predictions.json"), "w") as f:
                 json.dump(predictions, f, indent=2)
         coco_eval = COCOeval(gt, dt, "bbox")
         coco_eval.evaluate()
@@ -367,12 +334,8 @@ class RetinaNet(pl.LightningModule):
         cls_loss = self._forward_classification_head(logits, gt_cls)
         reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
 
-        pred_boxes = self.calculate_bbox(
-            self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
-        )
-        nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
-            torch.sigmoid(logits), pred_boxes
-        )
+        pred_boxes = self.calculate_bbox(self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std)
+        nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(torch.sigmoid(logits), pred_boxes)
         return cls_loss, reg_loss, nms_image_idx, nms_bboxes, nms_classes, nms_scores
 
     def _adjust_scales_offsets(self) -> None:
@@ -382,24 +345,34 @@ class RetinaNet(pl.LightningModule):
         self.boxes[:, 1] = self.boxes[:, 1] - self.offset_y
         self.boxes = self.boxes / self.scales[:, None]
 
-    def _log_coco_results(self, stats):
+    @rank_zero_only
+    def _log_coco_results(self, stats, stage="eval"):
         map_avg, map_50, map_75, map_small, map_medium, map_large, *_ = stats
-        self.log("COCO/mAP@0.5:0.95:0.05", map_avg)
-        self.log("COCO/mAP@0.5", map_50)
-        self.log("COCO/mAP@0.75", map_75)
-        self.log("COCO/mAP_small", map_small)
-        self.log("COCO/mAP_medium", map_medium)
-        self.log("COCO/mAP_large", map_large)
-
+        self.log(f"COCO_{stage}/mAP@0.5:0.95:0.05", map_avg)
+        self.log(f"COCO_{stage}/mAP@0.5", map_50)
+        self.log(f"COCO_{stage}/mAP@0.75", map_75)
+        self.log(f"COCO_{stage}/mAP_small", map_small)
+        self.log(f"COCO_{stage}/mAP_medium", map_medium)
+        self.log(f"COCO_{stage}/mAP_large", map_large)
+        
+    @property
+    def parameter_count(self):
+        count = sum([p.numel() for p in self.parameters()])
+        return f"{count:,}"
+        
     def configure_optimizers(self):
-        optimizer = ifnone(
-            load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
-            torch.optim.Adam(self.parameters(), lr=1e-5),
-        )
+        if self.effective_batch_size > 64 and has_apex:
+            logger.info("Training with LAMB optimizer")
+            optimizer = apex.optimizers.FusedLAMB(self.parameters(), lr=1e-3, weight_decay=0.01)
+        else:
+            optimizer = ifnone(
+                load_obj(self.optimizer.name)(self.parameters(), **self.optimizer.params),
+                torch.optim.Adam(self.parameters(), lr=1e-5),
+            )
+            logger.info("Optimizer: adam")
 
-        scheduler = load_obj(self.scheduler.name)(
-            optimizer, total_steps=self.total_steps, **self.scheduler.params
-        )
+        #         optimizer = torch.optim.Adam(self.parameters(), lr=3e-4)
+        scheduler = load_obj(self.scheduler.name)(optimizer, total_steps=self.total_steps, **self.scheduler.params)
         schedulers = {
             "scheduler": scheduler,
             "interval": "step",
@@ -438,9 +411,7 @@ class ResNet(nn.Module):
     def __init__(self, depth: int, pretrained: bool = False):
 
         if depth not in (18, 34, 50, 101, 152):
-            raise ValueError(
-                f"invalid depth specified. depth must be one of 18, 34, 50, 101, 152, got {depth}"
-            )
+            raise ValueError(f"invalid depth specified. depth must be one of 18, 34, 50, 101, 152, got {depth}")
 
         super(ResNet, self).__init__()
         self.model_repr = f"resnet{depth}"
@@ -481,9 +452,7 @@ class ResNeXt(ResNet, nn.Module):
 
     def __init__(self, depth: int, pretrained: bool = False):
         if depth not in (50, 101):
-            raise ValueError(
-                f"invalid depth specified. depth must be one of 50, 101 got {depth}"
-            )
+            raise ValueError(f"invalid depth specified. depth must be one of 50, 101 got {depth}")
 
         super(ResNet, self).__init__()
         self.model_repr = f"resnext{depth}_32x{4 * (depth // 50)}d"
@@ -501,9 +470,7 @@ class WideResNet(ResNet, nn.Module):
 
     def __init__(self, depth: int, pretrained: bool = False):
         if depth not in (50, 101):
-            raise ValueError(
-                f"invalid depth specified. depth must be one of 50, 101 got {depth}"
-            )
+            raise ValueError(f"invalid depth specified. depth must be one of 50, 101 got {depth}")
 
         super(ResNet, self).__init__()
         self.model_repr = f"wide_resnet{depth}_2"
@@ -580,9 +547,7 @@ class UpsampleSkipBlock(nn.Module):
         (torch.Tensor): merged feature map from top and lateral branches.
     """
 
-    def __init__(
-        self, in_channels: int, lateral_channels: int, upsample: Optional[str] = None
-    ):
+    def __init__(self, in_channels: int, lateral_channels: int, upsample: Optional[str] = None):
         super(UpsampleSkipBlock, self).__init__()
         if upsample is not None:
             assert upsample in (
@@ -590,9 +555,7 @@ class UpsampleSkipBlock(nn.Module):
                 "bilinear",
             ), f"Upsample mode must be either `nearest` or `bilinear`, got {upsample}"
             align_corners = False if upsample == "bilinear" else None
-            self.up = nn.Upsample(
-                scale_factor=2, mode=upsample, align_corners=align_corners
-            )
+            self.up = nn.Upsample(scale_factor=2, mode=upsample, align_corners=align_corners)
         else:
             self.up = nn.ConvTranspose2d(
                 in_channels=in_channels,
@@ -658,9 +621,7 @@ class FPN(nn.Module):
         self.p4 = UpsampleSkipBlock(channels, ch_c4, upsample)
         self.p3 = UpsampleSkipBlock(channels, ch_c3, upsample)
         self.p6 = nn.Conv2d(ch_c5, channels, kernel_size=3, stride=2, padding=1)
-        self.p7 = nn.Sequential(
-            nn.ReLU(), nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1)
-        )
+        self.p7 = nn.Sequential(nn.ReLU(), nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1))
 
     def forward(self, C3: torch.Tensor, C4: torch.Tensor, C5: torch.Tensor):
         P5_1 = self.p5_1(C5)
@@ -696,9 +657,7 @@ def _get_feature_depths(model_name: str) -> Tuple[int, int, int]:
     return feature_maps[model_name]
 
 
-def _get_backbone(
-    name: str, depth: Optional[int] = None, pretrained: Optional[bool] = False
-):
+def _get_backbone(name: str, depth: Optional[int] = None, pretrained: Optional[bool] = False):
     backbones = {"resnet": ResNet, "resnext": ResNeXt, "wide_resnet": WideResNet}
 
     if depth is None:
@@ -710,9 +669,7 @@ def _get_backbone(
             raise e
 
     if name not in backbones:
-        raise ValueError(
-            f"Invalid backbone specified. Currently supported {','.join(list(backbones.keys()))}"
-        )
+        raise ValueError(f"Invalid backbone specified. Currently supported {','.join(list(backbones.keys()))}")
 
     return backbones[name](depth=depth, pretrained=pretrained)
 
@@ -787,9 +744,7 @@ class NMS(nn.Module):
         # print(f"batched_nms >> num_classes: {num_classes}")
         # print(logits.size())
         scores, class_indices = logits.max(dim=2)
-        rows = (
-            torch.arange(batch_size, dtype=torch.long)[:, None] * num_classes
-        ).type_as(class_indices)
+        rows = (torch.arange(batch_size, dtype=torch.long)[:, None] * num_classes).type_as(class_indices)
         cat_idx = class_indices + rows
         #         print(f"batched_nms >> max_score: {scores.max()}")
         #         print(f"batched_nms >> min_score: {scores.min()}")
@@ -806,9 +761,7 @@ class NMS(nn.Module):
         # print(category_idx.size())
         # print(scores[mask].size())
 
-        keep_indices = torchvision.ops.boxes.batched_nms(
-            boxes[mask], scores[mask], cat_idx[mask], self.nms_threshold
-        )
+        keep_indices = torchvision.ops.boxes.batched_nms(boxes[mask], scores[mask], cat_idx[mask], self.nms_threshold)
         nms_image_idx = image_ids[keep_indices]
         nms_bboxes = boxes[mask][keep_indices]
         nms_scores = scores[mask][keep_indices]
