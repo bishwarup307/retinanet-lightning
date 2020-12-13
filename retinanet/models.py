@@ -354,7 +354,12 @@ class RetinaNet(pl.LightningModule):
         self.log(f"COCO_{stage}/mAP_small", map_small)
         self.log(f"COCO_{stage}/mAP_medium", map_medium)
         self.log(f"COCO_{stage}/mAP_large", map_large)
-
+        
+    @property
+    def parameter_count(self):
+        count = sum([p.numel() for p in self.parameters()])
+        return f"{count:,}"
+        
     def configure_optimizers(self):
         if self.effective_batch_size > 64 and has_apex:
             logger.info("Training with LAMB optimizer")
