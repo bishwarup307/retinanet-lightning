@@ -20,9 +20,7 @@ import torch.distributed as dist
 def parse_cli_args():
     parser = argparse.ArgumentParser("Retinanet config")
     parser.add_argument("-cfg", "--config-path", type=str, default="./config.yaml")
-    parser.add_argument(
-        "--root", type=str, required=False, help="dataset root directory"
-    )
+    parser.add_argument("--root", type=str, required=False, help="dataset root directory")
     parser.add_argument("--logdir", type=str, required=False, help="root log directory")
     args = parser.parse_args()
     return args

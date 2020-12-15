@@ -65,13 +65,11 @@ class MultiBoxPrior(nn.Module):
     @torch.no_grad()
     def forward(self, image):
         im_hw = np.array(image.size()[2:])
-#         fmap_sizes = [tuple(im_hw // x) for x in self.strides]
+        #         fmap_sizes = [tuple(im_hw // x) for x in self.strides]
         fmap_sizes = [tuple(np.ceil(im_hw / x).astype(int)) for x in self.strides]
 
         all_anchors = []
-        for (level, size, stride, fmap_size) in zip(
-            self.pyramid_levels, self.sizes, self.strides, fmap_sizes
-        ):
+        for (level, size, stride, fmap_size) in zip(self.pyramid_levels, self.sizes, self.strides, fmap_sizes):
             anchors = _generate_anchors(size, self.scales, self.ratios)
             anchors = _project_anchors(fmap_size, stride, anchors)
             all_anchors.append(anchors)
@@ -80,9 +78,7 @@ class MultiBoxPrior(nn.Module):
         return all_anchors
 
 
-def _generate_anchors(
-    size: int, scales: torch.Tensor, ratios: torch.Tensor
-) -> torch.Tensor:
+def _generate_anchors(size: int, scales: torch.Tensor, ratios: torch.Tensor) -> torch.Tensor:
     """
     calculates N = S x A anchors given S scales and A aspect ratios (AR).
     Args:
@@ -113,9 +109,7 @@ def _generate_anchors(
     return anchors
 
 
-def _project_anchors(
-    fmap_shape: Sequence[int], stride: int, anchors: torch.Tensor
-) -> torch.Tensor:
+def _project_anchors(fmap_shape: Sequence[int], stride: int, anchors: torch.Tensor) -> torch.Tensor:
     """
     project the calculated anchors in each (W x H) positions of a feature map.
     Args:

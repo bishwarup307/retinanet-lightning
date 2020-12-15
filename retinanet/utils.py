@@ -81,9 +81,7 @@ def load_obj(obj_path: str, default_obj_path: str = "") -> Any:
     obj_name = obj_path_list[0]
     module_obj = importlib.import_module(obj_path)
     if not hasattr(module_obj, obj_name):
-        raise AttributeError(
-            "Object `{}` cannot be loaded from `{}`.".format(obj_name, obj_path)
-        )
+        raise AttributeError("Object `{}` cannot be loaded from `{}`.".format(obj_name, obj_path))
     return getattr(module_obj, obj_name)
 
 
@@ -134,9 +132,7 @@ def get_logger(
         file_handler.setLevel(logging.DEBUG)
     stream_handler = logging.StreamHandler()
     stream_handler.setLevel(logging.DEBUG)
-    formatter = ColorFormatter(
-        "[%(asctime)s - %(levelname)s - %(filename)s:%(lineno)s] -> %(message)s"
-    )
+    formatter = ColorFormatter("[%(asctime)s - %(levelname)s - %(filename)s:%(lineno)s] -> %(message)s")
     if filepath is not None:
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
@@ -169,9 +165,7 @@ def get_callbacks(callback_config: DictConfig):
                 )
             )
         if callback == "lr_monitor":
-            callbacks.append(
-                LearningRateMonitor(logging_interval=params.logging_interval)
-            )
+            callbacks.append(LearningRateMonitor(logging_interval=params.logging_interval))
     return callbacks
 
 
@@ -226,9 +220,7 @@ def all_gather(data):
     for _ in size_list:
         tensor_list.append(torch.empty((max_size,), dtype=torch.uint8, device="cuda"))
     if local_size != max_size:
-        padding = torch.empty(
-            size=(max_size - local_size,), dtype=torch.uint8, device="cuda"
-        )
+        padding = torch.empty(size=(max_size - local_size,), dtype=torch.uint8, device="cuda")
         tensor = torch.cat((tensor, padding), dim=0)
     dist.all_gather(tensor_list, tensor)
 
@@ -258,9 +250,7 @@ def xyxy_to_ccwh(t: torch.Tensor) -> torch.Tensor:
     """
     converts bbox coordinates from `(xmin, ymin, xmax, ymax)` to `(x_center, y_center, width, height)`
     """
-    assert (
-        t.size(-1) == 4
-    ), "input tensor must be of size `(N, 4)` with format `(xmin, ymin, xmax, ymax)`"
+    assert t.size(-1) == 4, "input tensor must be of size `(N, 4)` with format `(xmin, ymin, xmax, ymax)`"
     mins = t[..., :2]
     maxs = t[..., 2:]
     return torch.cat([(mins + maxs) / 2, maxs - mins], dim=-1)
@@ -270,9 +260,7 @@ def ccwh_to_xyxy(t: torch.Tensor) -> torch.Tensor:
     """
     converts bbox coordinates from `(x_center, y_center, width, height)` to `(xmin, ymin, xmax, ymax)`
     """
-    assert (
-        t.size(-1) == 4
-    ), "input tensor must be of size `(N, 4)` with format `(x_center, y_center, width, height)`"
+    assert t.size(-1) == 4, "input tensor must be of size `(N, 4)` with format `(x_center, y_center, width, height)`"
     cc = t[..., :2]
     wh = t[..., 2:]
     return torch.cat([cc - wh / 2, cc + wh / 2], dim=-1)
@@ -284,9 +272,7 @@ def _is_xyxy(boxes: torch.Tensor) -> bool:
     return is_valid_width and is_valid_height
 
 
-def bbox_iou(
-    boxes1: torch.Tensor, boxes2: torch.Tensor, eps: Optional[float] = 1e-6
-) -> torch.Tensor:
+def bbox_iou(boxes1: torch.Tensor, boxes2: torch.Tensor, eps: Optional[float] = 1e-6) -> torch.Tensor:
     """
     Calculates Intersection over Union (IoU), also known as Jaccard Index, between a pair of bounding boxes not
     necessarily of the same length. If the `boxes1` shape is `(N, 4)` and `boxes2` shape is `(M, 4)`, the
@@ -300,27 +286,15 @@ def bbox_iou(
     Returns:
         IoUs between the boxes
     """
-    assert (
-        boxes1.ndim == 2
-    ), f"Invalid box dimension, requires of the shape `(N, 4)`, got {list(boxes1.shape)}"
-    assert (
-        boxes2.ndim == 2
-    ), f"Invalid box dimension, requires of the shape `(N, 4)`, got {list(boxes2.shape)}"
+    assert boxes1.ndim == 2, f"Invalid box dimension, requires of the shape `(N, 4)`, got {list(boxes1.shape)}"
+    assert boxes2.ndim == 2, f"Invalid box dimension, requires of the shape `(N, 4)`, got {list(boxes2.shape)}"
 
-    assert _is_xyxy(
-        boxes1
-    ), "expects bboxes to be in the format `(xmin, ymin, xmax, ymax)` at position 0"
-    assert _is_xyxy(
-        boxes2
-    ), f"expects bboxes to be in the format `(xmin, ymin, xmax, ymax)` at position 1 \n {boxes2}"
+    assert _is_xyxy(boxes1), "expects bboxes to be in the format `(xmin, ymin, xmax, ymax)` at position 0"
+    assert _is_xyxy(boxes2), f"expects bboxes to be in the format `(xmin, ymin, xmax, ymax)` at position 1 \n {boxes2}"
 
     # intersection = min(max(coordinate)) - max(min(coordinate))
-    iw = torch.min(boxes1[:, None, 2], boxes2[:, 2]) - torch.max(
-        boxes1[:, None, 0], boxes2[:, 0]
-    )
-    ih = torch.min(boxes1[:, None, 3], boxes2[:, 3]) - torch.max(
-        boxes1[:, None, 1], boxes2[:, 1]
-    )
+    iw = torch.min(boxes1[:, None, 2], boxes2[:, 2]) - torch.max(boxes1[:, None, 0], boxes2[:, 0])
+    ih = torch.min(boxes1[:, None, 3], boxes2[:, 3]) - torch.max(boxes1[:, None, 1], boxes2[:, 1])
     # iw and ih are negative if there is no intersection between widths and heights
     iw = torch.clamp(iw, 0.0)
     ih = torch.clamp(ih, 0.0)
@@ -391,9 +365,7 @@ def get_anchor_labels(
     """
     if len(gt_boxes) == 0:
         target_boxes = torch.zeros_like(anchors)
-        target_classes = torch.zeros(
-            len(anchors)
-        )  # all anchors are assigned to background
+        target_classes = torch.zeros(len(anchors))  # all anchors are assigned to background
 
     else:
         ious = bbox_iou(anchors, gt_boxes)
@@ -404,9 +376,7 @@ def get_anchor_labels(
 
         target_boxes = gt_boxes[max_idx]
         target_boxes = _calculate_offsets(anchors, target_boxes)
-        target_boxes = (
-            target_boxes / torch.tensor([0.1, 0.1, 0.2, 0.2]).float()
-        )  # scale with prior variance
+        target_boxes = target_boxes / torch.tensor([0.1, 0.1, 0.2, 0.2]).float()  # scale with prior variance
 
         target_classes = 1 + gt_cls[max_idx]
         target_classes[max_iou <= neg_threshold] = 0.0
@@ -462,9 +432,7 @@ def batched_nms(
     instances_per_image = mask.sum(dim=1)
 
     selected_class_indices = class_indices[mask]
-    image_ids = torch.arange(num_classes, num_classes + logits.size(0)).type_as(
-        class_indices
-    )
+    image_ids = torch.arange(num_classes, num_classes + logits.size(0)).type_as(class_indices)
     image_ids = torch.repeat_interleave(image_ids, instances_per_image)
     category_idx = image_ids * (selected_class_indices + 1)
     selected_bboxes = boxes[mask]
@@ -473,9 +441,7 @@ def batched_nms(
     # print(category_idx.size())
     # print(scores[mask].size())
 
-    keep_indices = torchvision.ops.boxes.batched_nms(
-        selected_bboxes, scores[mask], category_idx, nms_threshold
-    )
+    keep_indices = torchvision.ops.boxes.batched_nms(selected_bboxes, scores[mask], category_idx, nms_threshold)
     nms_image_idx = image_ids[keep_indices] - num_classes
     nms_bboxes = selected_bboxes[keep_indices]
     nms_scores = scores[mask][keep_indices]
@@ -494,9 +460,7 @@ def offset_to_bbox(offsets: torch.Tensor, anchors: torch.Tensor):
     return boxes_xyxy
 
 
-def visualize_random_sample(
-    dataset: Dataset, train: bool = True, unnormalize: bool = True
-):
+def visualize_random_sample(dataset: Dataset, train: bool = True, unnormalize: bool = True):
     n = len(dataset)
     index = random.choice(np.arange(n))
     if train:

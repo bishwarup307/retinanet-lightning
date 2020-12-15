@@ -107,7 +107,12 @@ class Augmenter:
 
             if name == "rgb_shift":
                 augs.append(
-                    A.RGBShift(r_shift_limit=params[0], g_shift_limit=params[1], b_shift_limit=params[2], p=params[3],)
+                    A.RGBShift(
+                        r_shift_limit=params[0],
+                        g_shift_limit=params[1],
+                        b_shift_limit=params[2],
+                        p=params[3],
+                    )
                 )
             if name == "cutout":
                 augs.append(A.Cutout(max_h_size=params[0], max_w_size=params[1], p=params[2]))
@@ -120,10 +125,18 @@ class Augmenter:
                 min_area=self.transforms["min_area"],
             ),
         )
-        transformed = trsf(image=sample["img"], bboxes=sample["annot"][:, :-1], category_ids=sample["annot"][:, -1],)
+        transformed = trsf(
+            image=sample["img"],
+            bboxes=sample["annot"][:, :-1],
+            category_ids=sample["annot"][:, -1],
+        )
         if len(transformed["bboxes"]):
             annot = np.concatenate(
-                [np.array(transformed["bboxes"]), np.array(transformed["category_ids"])[..., np.newaxis],], axis=1,
+                [
+                    np.array(transformed["bboxes"]),
+                    np.array(transformed["category_ids"])[..., np.newaxis],
+                ],
+                axis=1,
             )
         else:
             annot = np.array([])
