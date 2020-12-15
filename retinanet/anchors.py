@@ -121,7 +121,7 @@ def _project_anchors(fmap_shape: Sequence[int], stride: int, anchors: torch.Tens
         torch.Tensor: anchor over all locations of a feature map. Given A anchors, the shape
         would be `(A x H x W, 4)`
     """
-    fh, fw = fmap_shape[:2]
+    fw, fh = fmap_shape[:2]
     x_mids = (torch.arange(fw) + 0.5) * stride
     y_mids = (torch.arange(fh) + 0.5) * stride
     x_mids = x_mids.repeat(fh, 1).T.flatten()
@@ -144,16 +144,3 @@ if __name__ == "__main__":
     anchors = anchor(img)
     print(anchors.size())
     print(anchors.sort(dim=-1))
-
-    # im_size = 256
-    # pyramid_levels = [3, 4, 5, 6, 7]
-    # strides = [2 ** x for x in pyramid_levels]
-    # size = [32, 64, 128, 256, 512]
-    # fmap_shape = [im_size // x for x in strides]
-    #
-    # pos = 0
-    # anchors = _generate_anchors(size[pos])
-    # all_anchors = _project_anchors(
-    #     [fmap_shape[pos], fmap_shape[pos]], strides[pos], anchors
-    # )
-    # print(all_anchors.size())
