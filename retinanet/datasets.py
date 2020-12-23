@@ -2,6 +2,7 @@
 __author__: bishwarup307
 Created: 23/11/20
 """
+import glob
 import os
 from pathlib import Path
 from typing import Optional, Dict, Tuple, List, Union, Callable
@@ -168,10 +169,11 @@ class CocoDataset(Dataset):
         self.return_ids = not train
         self.nsr = nsr if nsr is not None else 1.0
 
-        self.classes = {}
-        self.labels = {}
-        self.coco_labels = {}
-        self.coco_labels_inverse = {}
+        self.classes = dict()
+        self.coco_label_map = dict()
+        self.labels = dict()
+        self.coco_labels = dict()
+        self.coco_labels_inverse = dict()
         self._load_classes()
         m = MultiBoxPrior()
         sample_input = torch.randn(1, 3, *image_size)
@@ -231,6 +233,7 @@ class CocoDataset(Dataset):
         categories.sort(key=lambda x: x["id"])
 
         for c in categories:
+            self.coco_label_map[c["id"]] = c["name"]
             self.coco_labels[len(self.classes)] = c["id"]
             self.coco_labels_inverse[c["id"]] = len(self.classes)
             self.classes[c["name"]] = len(self.classes)
@@ -302,6 +305,51 @@ class CocoDataset(Dataset):
 
     def _coco_label_to_label(self, coco_label):
         return self.coco_labels_inverse[coco_label]
+
+
+class TestDataset(Dataset):
+    def __init__(
+        self,
+        root: str,
+        image_size: Tuple[int, int],
+        normalize_mean: Optional[List[float]] = None,
+        normalize_std: Optional[List[float]] = None,
+    ):
+        exts = ["jpg", "png", "tiff", "JPG", "jpeg"]
+        self.images = [x for x in glob.glob(os.path.join(root, "*")) for ext in exts if x.endswith(ext)]
+
+        if not len(self.images):
+            raise ValueError(f"The specified diretory {root} does not contain any image files")
+
+        self.image_ids = torch.arange(len(self.images))
+        self.image_size = image_size
+
+        self.mean = ifnone(normalize_mean, [0.485, 0.456, 0.406])
+        self.std = ifnone(normalize_std, [0.229, 0.224, 0.225])
+
+    def __len__(self):
+        return len(self.images)
+
+    def __getitem__(self, idx: int):
+        if idx > len(self):
+            idx = np.random.choice(range(len(self)))
+        img = np.array(Image.open(self.images[idx]))
+        sample = {"img": img}
+        resize = Resizer(self.image_size)  # resize
+        sample = resize(sample)
+
+        normalizer = Normalizer(self.mean, self.std)
+        sample["img"] = normalizer(sample["img"])
+        sample["img"] = torch.from_numpy(sample["img"].astype(np.float32))
+
+        sample["image_id"] = self.image_ids[idx]
+        return (
+            sample["img"].permute(2, 0, 1).contiguous(),
+            sample["scale"],
+            sample["offset_x"],
+            sample["offset_y"],
+            sample["image_id"],
+        )
 
 
 def list_collate(batch: List):

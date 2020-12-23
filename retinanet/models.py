@@ -5,8 +5,9 @@ Created: 22/11/20
 import copy
 import json
 import math
+import os
 from pathlib import Path
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence, Tuple, Union, Dict
 
 import numpy as np
 import pytorch_lightning as pl
@@ -14,7 +15,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 from pytorch_lightning import _logger as logger
 from pytorch_lightning.utilities import rank_zero_only
@@ -50,6 +51,7 @@ class RetinaNet(pl.LightningModule):
         anchors: Optional[torch.Tensor] = None,
         dataset_val: Optional[Any] = None,
         dataset_size: Optional[int] = 1,
+        coco_label_map: Optional[Dict[int, str]] = None,
     ):
         super(RetinaNet, self).__init__()
         self.save_hyperparameters("cfg")
@@ -106,9 +108,13 @@ class RetinaNet(pl.LightningModule):
         self.register_buffer("anchors", anchors)
 
         self.image_size = cfg.Dataset.image_size[:2]
+
         if dataset_val is not None:
+            self.dataset_val = dataset_val
             self.coco_labels = dataset_val.coco_labels
             self.val_coco_gt = dataset_val.coco
+        self.coco_label_map = coco_label_map
+
         self.val_preds = "val" if cfg.Trainer.save_val_predictions else None
         self.test_preds = "test" if cfg.Trainer.save_test_predictions else None
         self.optimizer = cfg.Trainer.optimizer
@@ -132,6 +138,29 @@ class RetinaNet(pl.LightningModule):
         )
         self.regression.block[-1].weight.data.fill_(0)
         self.regression.block[-1].bias.data.fill_(0)
+
+    @classmethod
+    def from_checkpoint(
+        cls, checkpoint_path: Union[str, os.PathLike], config_path: Optional[Union[str, os.PathLike]] = None
+    ):
+
+        if config_path is None:
+            logdir = Path(checkpoint_path).parent.parent
+        else:
+            logdir = Path(config_path)
+        cfg_path = logdir.joinpath("hparams.yaml")
+
+        try:
+            cfg = OmegaConf.load(cfg_path)
+        except FileNotFoundError:
+            raise ValueError(f"could not find `hparams.yaml` in {str(cfg_path)}. ")
+
+        label_map_file = logdir.joinpath("coco_label_map.json")
+        if label_map_file.is_file():
+            with open(label_map_file, "r") as f:
+                coco_label_map = json.load(f)
+
+        pass
 
     def _forward_classification_head(self, logits: torch.Tensor, gt_cls: torch.Tensor) -> torch.Tensor:
         num_pos = (gt_cls > 0).sum(axis=1)
@@ -173,6 +202,9 @@ class RetinaNet(pl.LightningModule):
             logits.append(cls_pred)
             offsets.append(reg_pred)
         return torch.cat(logits, dim=1), torch.cat(offsets, dim=1)
+
+    def on_train_start(self) -> None:
+        self._save_dataset_attributes()
 
     def on_train_epoch_start(self) -> None:
         self.backbone.freeze_bn()
@@ -243,16 +275,44 @@ class RetinaNet(pl.LightningModule):
         self._log_coco_results(stats)
 
     def test_step(self, batch, batch_idx):
-        metrics = self.validation_step(batch, batch_idx)
-        metrics = {
-            "cls_loss": metrics["cls_loss"],
-            "reg_loss": metrics["reg_loss"],
-        }
+        calc_loss = False
+        try:
+            img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
+        except ValueError:
+            img, scales, offset_x, offset_y, image_ids = batch
+            gt_boxes, gt_cls = None, None
+
+        (
+            cls_loss,
+            reg_loss,
+            nms_image_idx,
+            nms_bboxes,
+            nms_classes,
+            nms_scores,
+        ) = self._nms_forward(img, gt_boxes, gt_cls)
+
+        self._update_trackers(
+            image_ids[nms_image_idx],
+            nms_bboxes,
+            nms_scores,
+            nms_classes,
+            scales[nms_image_idx],
+            offset_x[nms_image_idx],
+            offset_y[nms_image_idx],
+        )
+
+        # metrics = self.validation_step(batch, batch_idx)
+        metrics = {"cls_loss": cls_loss, "reg_loss": reg_loss}
         return metrics
 
     def test_epoch_end(self, outputs: List[Any]) -> None:
-        avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
-        avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
+        try:
+            avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
+            avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
+        except TypeError:
+            avg_cls_loss = None
+            avg_reg_loss = None
+
         metrics = {
             "test/cls_loss": avg_cls_loss,
             "test/reg_loss": avg_reg_loss,
@@ -260,8 +320,13 @@ class RetinaNet(pl.LightningModule):
         self.log_dict(metrics, sync_dist=True)
         self._adjust_scales_offsets()
         self._sync_processes()
-        stats = self.coco_eval(save_name=self.test_preds)
-        self._log_coco_results(stats, stage="test")
+
+        do_coco_eval = avg_reg_loss is not None and avg_cls_loss is not None
+        if do_coco_eval:
+            stats = self.coco_eval(save_name=self.test_preds)
+            self._log_coco_results(stats, stage="test")
+        else:
+            self.save_test_predictions()
 
     #         logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
     #         logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
@@ -300,6 +365,24 @@ class RetinaNet(pl.LightningModule):
         coco_eval.summarize()
         return coco_eval.stats
 
+    @rank_zero_only
+    def _save_dataset_attributes(self):
+        # with open(Path(self.logger.log_dir).joinpath("labels_desc.json"), "w") as f:
+        #     json.dump(self.dataset_val.labels, f, indent=2)
+        with open(Path(self.logger.log_dir).joinpath("coco_label_map.json"), "w") as f:
+            json.dump(self.dataset_val.coco_label_map, f, indent=2)
+
+    @rank_zero_only
+    def save_test_predictions(self):
+        preds = dict()
+        for det in self.coco_res:
+            key = self.dataset_val.image_ids[det["image_id"]]
+            value = {
+                "bbox": list(map(int, det["bbox"])),
+                "confidence": det["score"],
+                "class_index": det["category_id"],
+            }
+
     def _initialize_trackers(self) -> None:
         self.image_ids = torch.tensor([], device=self.device, dtype=torch.long)
         self.boxes = torch.tensor([], device=self.device)
@@ -327,15 +410,19 @@ class RetinaNet(pl.LightningModule):
         self.offset_x = torch.cat([self.offset_x, offset_x])
         self.offset_y = torch.cat([self.offset_y, offset_y])
 
-    def _nms_forward(self, img, gt_boxes, gt_cls):
+    def _nms_forward(self, img: torch.Tensor, gt_boxes: torch.Tensor, gt_cls: torch.Tensor):
         # img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
         logits, offsets = self(img)
 
-        cls_loss = self._forward_classification_head(logits, gt_cls)
-        reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
-
         pred_boxes = self.calculate_bbox(self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std)
         nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(torch.sigmoid(logits), pred_boxes)
+
+        calc_loss = gt_cls is not None and gt_boxes is not None
+        cls_loss, reg_loss = None, None
+        if calc_loss:
+            cls_loss = self._forward_classification_head(logits, gt_cls)
+            reg_loss = self._forward_regression_head(offsets, gt_boxes, gt_cls)
+
         return cls_loss, reg_loss, nms_image_idx, nms_bboxes, nms_classes, nms_scores
 
     def _adjust_scales_offsets(self) -> None:

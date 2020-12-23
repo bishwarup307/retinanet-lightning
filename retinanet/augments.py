@@ -22,21 +22,26 @@ class Resizer:
         self.resize_fn = {"letterbox": letterbox, "minmax": min_max_resize}[resize_mode]
 
     def __call__(self, sample) -> Dict:
-        image, annots = sample["img"], sample["annot"]
-        rsz_img, scale, offset_x, offset_y = self.resize_fn(image, self.size)
-        annots[:, :4] *= scale
-        annots[:, 0] += offset_x
-        annots[:, 1] += offset_y
-        annots[:, 2] += offset_x
-        annots[:, 3] += offset_y
+        resize_params = dict()
 
-        return {
-            "img": rsz_img,
-            "annot": annots,
-            "scale": scale,
-            "offset_x": offset_x,
-            "offset_y": offset_y,
-        }
+        image = sample["img"]
+        rsz_img, scale, offset_x, offset_y = self.resize_fn(image, self.size)
+        resize_params["img"] = rsz_img
+        resize_params["scale"] = scale
+        resize_params["offset_x"] = offset_x
+        resize_params["offset_y"] = offset_y
+        try:
+            annots = sample["annot"]
+            annots[:, :4] *= scale
+            annots[:, 0] += offset_x
+            annots[:, 1] += offset_y
+            annots[:, 2] += offset_x
+            annots[:, 3] += offset_y
+            resize_params["annot"] = annots
+        except KeyError:
+            pass
+
+        return resize_params
 
 
 class Normalizer:
