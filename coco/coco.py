@@ -299,13 +299,7 @@ class COCO:
                         markeredgewidth=2,
                     )
                     plt.plot(
-                        x[v > 1],
-                        y[v > 1],
-                        "o",
-                        markersize=8,
-                        markerfacecolor=c,
-                        markeredgecolor=c,
-                        markeredgewidth=2,
+                        x[v > 1], y[v > 1], "o", markersize=8, markerfacecolor=c, markeredgecolor=c, markeredgewidth=2,
                     )
 
                 if draw_bbox:

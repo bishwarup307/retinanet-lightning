@@ -24,8 +24,7 @@ from omegaconf import DictConfig
 
 class DataModule(pl.LightningDataModule):
     def __init__(
-        self,
-        cfg: DictConfig,
+        self, cfg: DictConfig,
     ):
         super(DataModule, self).__init__()
         if cfg.Dataset.dataset != "coco":
@@ -63,9 +62,7 @@ class DataModule(pl.LightningDataModule):
     def setup(self, stage: Optional[str] = None):
         if stage == "fit" or stage is None:
             self.train_dataset = CocoDataset(
-                image_dir=self.train_image_dir,
-                json_path=self.train_label_path,
-                image_size=self.image_size,
+                image_dir=self.train_image_dir, json_path=self.train_label_path, image_size=self.image_size,
             )
             self.num_classes = len(self.train_dataset.coco.getCatIds())
             self.anchors = self.train_dataset.anchors
@@ -157,11 +154,7 @@ class CocoDataset(Dataset):
         except TypeError:
             self.normalize_mean, self.normalize_std = (
                 [0.485, 0.456, 0.406],
-                [
-                    0.229,
-                    0.224,
-                    0.225,
-                ],
+                [0.229, 0.224, 0.225,],
             )
 
         self.coco = COCO(json_path)
