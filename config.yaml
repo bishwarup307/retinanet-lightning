@@ -7,7 +7,7 @@ Dataset:
   image_size: [512, 512, 3]
 Model:
   backbone:
-    name: "resnet_34"
+    name: "resnet_50"
     pretrained: True
     freeze_bn: True
   anchors:
@@ -23,7 +23,7 @@ Model:
     upsample: "nearest"
   head:
     classification:
-      num_classes: 80
+      num_classes: 1
       n_repeat: 4
       use_bn: False
       activation: 'relu'
@@ -62,7 +62,7 @@ Trainer:
       div_factor: 10
       final_div_factor: 1e2
   tpus: 0
-  gpus: 4
+  gpus: 1
   dist_backend: 'ddp'
   workers: 8
   clip_grad_norm: 0.1
@@ -73,13 +73,13 @@ Trainer:
     checkpoint:
       enabled: True
       save_top_k: 3
-      monitor: 'val_loss'
-      mode: 'auto'
+      monitor: 'COCO_eval/mAP@0.5:0.95:0.05'
+      mode: 'max'
       verbose: False
     early_stopping:
-      enabled: False
-      monitor: 'val_loss'
-      mode: 'auto'
+      enabled: True
+      monitor: 'COCO_eval/mAP@0.5:0.95:0.05'
+      mode: 'max'
       patience: 5
       verbose: False
     lr_monitor:
