@@ -95,13 +95,18 @@ class DataModule(pl.LightningDataModule):
                 self.test_dataset = None
 
     def train_dataloader(self, *args, **kwargs) -> DataLoader:
-        sampler = None
         if self.cfg.Dataset.nsr is not None:
             sampler = WeightedRandomSampler(self.train_dataset.weights, len(self.train_dataset), replacement=True)
+            return DataLoader(
+                self.train_dataset,
+                sampler=sampler,
+                batch_size=self.cfg.Trainer.batch_size.train,
+                num_workers=self.cfg.Trainer.workers,
+                pin_memory=self.cfg.Trainer.gpus > 0,
+            )
 
         return DataLoader(
             self.train_dataset,
-            sampler=sampler,
             batch_size=self.cfg.Trainer.batch_size.train,
             num_workers=self.cfg.Trainer.workers,
             pin_memory=self.cfg.Trainer.gpus > 0,
@@ -109,16 +114,13 @@ class DataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self, *args, **kwargs) -> Union[DataLoader, List[DataLoader]]:
-        sampler = None
-        if self.cfg.Dataset.nsr is not None:
-            sampler = WeightedRandomSampler(self.val_dataset.weights, len(self.val_dataset), replacement=True)
         if self.val_dataset is not None:
             return DataLoader(
                 self.val_dataset,
-                sampler=sampler,
                 batch_size=self.cfg.Trainer.batch_size.val,
                 num_workers=self.cfg.Trainer.workers,
                 pin_memory=self.cfg.Trainer.gpus > 0,
+                shuffle=False,
             )
 
     def test_dataloader(self, *args, **kwargs) -> Union[DataLoader, List[DataLoader]]:
@@ -128,6 +130,7 @@ class DataModule(pl.LightningDataModule):
                 batch_size=self.cfg.Trainer.batch_size.test,
                 num_workers=self.cfg.Trainer.workers,
                 pin_memory=self.cfg.Trainer.gpus > 0,
+                shuffle=False,
             )
 
 

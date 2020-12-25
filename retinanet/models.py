@@ -99,7 +99,8 @@ class RetinaNet(pl.LightningModule):
         if anchors is None:
             m = MultiBoxPrior()
             sample_image = torch.randn(
-                size=(4, 3, cfg.Dataset.image_size[0], cfg.Dataset.image_size[1]), device=self.device,
+                size=(4, 3, cfg.Dataset.image_size[0], cfg.Dataset.image_size[1]),
+                device=self.device,
             )
             anchors = m(sample_image)
 
@@ -202,7 +203,10 @@ class RetinaNet(pl.LightningModule):
         return cls_loss
 
     def _forward_regression_head(
-        self, pred_box_offsets: torch.Tensor, gt_box_offsets: torch.Tensor, gt_cls: torch.Tensor,
+        self,
+        pred_box_offsets: torch.Tensor,
+        gt_box_offsets: torch.Tensor,
+        gt_cls: torch.Tensor,
     ) -> torch.Tensor:
         mask = gt_cls > 0
         masked_gt = gt_box_offsets[mask]
@@ -254,9 +258,14 @@ class RetinaNet(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
         img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
-        (cls_loss, reg_loss, nms_image_idx, nms_bboxes, nms_classes, nms_scores,) = self._nms_forward(
-            img, gt_boxes, gt_cls
-        )
+        (
+            cls_loss,
+            reg_loss,
+            nms_image_idx,
+            nms_bboxes,
+            nms_classes,
+            nms_scores,
+        ) = self._nms_forward(img, gt_boxes, gt_cls)
 
         self._update_trackers(
             image_ids[nms_image_idx],
@@ -280,9 +289,14 @@ class RetinaNet(pl.LightningModule):
             img, scales, offset_x, offset_y, image_ids = batch
             gt_boxes, gt_cls = None, None
 
-        (cls_loss, reg_loss, nms_image_idx, nms_bboxes, nms_classes, nms_scores,) = self._nms_forward(
-            img, gt_boxes, gt_cls
-        )
+        (
+            cls_loss,
+            reg_loss,
+            nms_image_idx,
+            nms_bboxes,
+            nms_classes,
+            nms_scores,
+        ) = self._nms_forward(img, gt_boxes, gt_cls)
 
         self._update_trackers(
             image_ids[nms_image_idx],
@@ -299,8 +313,12 @@ class RetinaNet(pl.LightningModule):
         return metrics
 
     def validation_epoch_end(self, outputs: List[Any]) -> None:
-        avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
-        avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
+        avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs])
+        avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs])
+        avg_cls_loss = avg_cls_loss[~torch.isnan(avg_cls_loss)].mean()
+        avg_reg_loss = avg_cls_loss[
+            ~torch.isnan(avg_reg_loss)
+        ].mean()  # a batch with no annotation will likely result in nan reg_loss
 
         val_loss = avg_cls_loss + avg_reg_loss
 
@@ -317,8 +335,10 @@ class RetinaNet(pl.LightningModule):
 
     def test_epoch_end(self, outputs: List[Any]) -> None:
         try:
-            avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs]).mean()
-            avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs]).mean()
+            avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs])
+            avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs])
+            avg_cls_loss = avg_cls_loss[~torch.isnan(avg_cls_loss)].mean()
+            avg_reg_loss = avg_cls_loss[~torch.isnan(avg_reg_loss)].mean()
         except TypeError:
             avg_cls_loss = -1
             avg_reg_loss = -1
@@ -674,10 +694,20 @@ class UpsampleSkipBlock(nn.Module):
             self.up = nn.Upsample(scale_factor=2, mode=upsample, align_corners=align_corners)
         else:
             self.up = nn.ConvTranspose2d(
-                in_channels=in_channels, out_channels=in_channels, kernel_size=2, padding=0, stride=2,
+                in_channels=in_channels,
+                out_channels=in_channels,
+                kernel_size=2,
+                padding=0,
+                stride=2,
             )
         self.skip = Conv_1x1(lateral_channels, in_channels)
-        self.conv = nn.Conv2d(in_channels=in_channels, out_channels=in_channels, kernel_size=3, stride=1, padding=1,)
+        self.conv = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=in_channels,
+            kernel_size=3,
+            stride=1,
+            padding=1,
+        )
 
     def forward(self, top: torch.Tensor, skip: torch.Tensor):
         merged = self.up(top)
@@ -714,7 +744,10 @@ class FPN(nn.Module):
     """
 
     def __init__(
-        self, in_channels: Tuple[int, int, int], channels: int = 256, upsample: Optional[str] = None,
+        self,
+        in_channels: Tuple[int, int, int],
+        channels: int = 256,
+        upsample: Optional[str] = None,
     ):
         super(FPN, self).__init__()
         ch_c3, ch_c4, ch_c5 = in_channels
