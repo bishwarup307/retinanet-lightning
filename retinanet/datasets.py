@@ -12,7 +12,7 @@ import numpy as np
 import torch
 from PIL import Image
 from coco.coco import COCO
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 
 from retinanet.anchors import MultiBoxPrior
 from retinanet.augments import Resizer, Augmenter, Normalizer
@@ -24,7 +24,8 @@ from omegaconf import DictConfig
 
 class DataModule(pl.LightningDataModule):
     def __init__(
-        self, cfg: DictConfig,
+        self,
+        cfg: DictConfig,
     ):
         super(DataModule, self).__init__()
         if cfg.Dataset.dataset != "coco":
@@ -62,7 +63,10 @@ class DataModule(pl.LightningDataModule):
     def setup(self, stage: Optional[str] = None):
         if stage == "fit" or stage is None:
             self.train_dataset = CocoDataset(
-                image_dir=self.train_image_dir, json_path=self.train_label_path, image_size=self.image_size,
+                image_dir=self.train_image_dir,
+                json_path=self.train_label_path,
+                image_size=self.image_size,
+                nsr=self.cfg.Dataset.nsr,
             )
             self.num_classes = len(self.train_dataset.coco.getCatIds())
             self.anchors = self.train_dataset.anchors
@@ -73,6 +77,7 @@ class DataModule(pl.LightningDataModule):
                     image_dir=self.val_image_dir,
                     json_path=self.val_label_path,
                     image_size=self.image_size,
+                    nsr=self.cfg.Dataset.nsr,
                     train=False,
                 )
             else:
@@ -90,8 +95,13 @@ class DataModule(pl.LightningDataModule):
                 self.test_dataset = None
 
     def train_dataloader(self, *args, **kwargs) -> DataLoader:
+        sampler = None
+        if self.cfg.Dataset.nsr is not None:
+            sampler = WeightedRandomSampler(self.train_dataset.weights, len(self.train_dataset), replacement=True)
+
         return DataLoader(
             self.train_dataset,
+            sampler=sampler,
             batch_size=self.cfg.Trainer.batch_size.train,
             num_workers=self.cfg.Trainer.workers,
             pin_memory=self.cfg.Trainer.gpus > 0,
@@ -99,9 +109,13 @@ class DataModule(pl.LightningDataModule):
         )
 
     def val_dataloader(self, *args, **kwargs) -> Union[DataLoader, List[DataLoader]]:
+        sampler = None
+        if self.cfg.Dataset.nsr is not None:
+            sampler = WeightedRandomSampler(self.val_dataset.weights, len(self.val_dataset), replacement=True)
         if self.val_dataset is not None:
             return DataLoader(
                 self.val_dataset,
+                sampler=sampler,
                 batch_size=self.cfg.Trainer.batch_size.val,
                 num_workers=self.cfg.Trainer.workers,
                 pin_memory=self.cfg.Trainer.gpus > 0,
@@ -154,13 +168,17 @@ class CocoDataset(Dataset):
         except TypeError:
             self.normalize_mean, self.normalize_std = (
                 [0.485, 0.456, 0.406],
-                [0.229, 0.224, 0.225,],
+                [
+                    0.229,
+                    0.224,
+                    0.225,
+                ],
             )
 
         self.coco = COCO(json_path)
         self.image_ids = self.coco.getImgIds()
         self.return_ids = not train
-        self.nsr = nsr if nsr is not None else 1.0
+        self.nsr = ifnone(nsr, 1.0)
 
         self.classes = dict()
         self.coco_label_map = dict()
@@ -190,7 +208,6 @@ class CocoDataset(Dataset):
         return sample
 
     def __getitem__(self, idx):
-
         img = self._load_image(idx, normalize=False)  # load image
         annot = self._load_annotations(idx)
         sample = {"img": img, "annot": annot}

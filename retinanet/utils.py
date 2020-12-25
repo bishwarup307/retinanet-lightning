@@ -119,7 +119,9 @@ class ColorFormatter(logging.Formatter):
 
 
 def get_logger(
-    name, filepath: Optional[Union[str, os.PathLike]] = None, level: Optional[str] = "debug",
+    name,
+    filepath: Optional[Union[str, os.PathLike]] = None,
+    level: Optional[str] = "debug",
 ):
     log_level = {"info": logging.INFO, "debug": logging.DEBUG, "error": logging.ERROR}
 
@@ -147,13 +149,19 @@ def get_callbacks(callback_config: DictConfig):
         if callback == "checkpoint":
             callbacks.append(
                 ModelCheckpoint(
-                    save_top_k=params.save_top_k, monitor=params.monitor, mode=params.mode, verbose=params.verbose,
+                    save_top_k=params.save_top_k,
+                    monitor=params.monitor,
+                    mode=params.mode,
+                    verbose=params.verbose,
                 )
             )
         if callback == "early_stopping":
             callbacks.append(
                 EarlyStopping(
-                    patience=params.patience, monitor=params.monitor, mode=params.mode, verbose=params.verbose,
+                    patience=params.patience,
+                    monitor=params.monitor,
+                    mode=params.mode,
+                    verbose=params.verbose,
                 )
             )
         if callback == "lr_monitor":
@@ -476,7 +484,11 @@ def visualize_random_sample(dataset: Dataset, train: bool = True, unnormalize: b
         # print(coords)
         # bb.add(img, *coords, "a", "blue")
         cv2.rectangle(
-            img, (coords[0], coords[1]), (coords[2], coords[3]), (0, 255, 0), thickness=1,
+            img,
+            (coords[0], coords[1]),
+            (coords[2], coords[3]),
+            (0, 255, 0),
+            thickness=1,
         )
 
     return img

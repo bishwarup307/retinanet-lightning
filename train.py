@@ -38,7 +38,12 @@ def main():
 
     logger.info("successfully loaded data module")
 
-    model = RetinaNet(cfg=cfg, anchors=dm.anchors, dataset_val=dm.val_dataset, dataset_size=dm.train_samples,)
+    model = RetinaNet(
+        cfg=cfg,
+        anchors=dm.anchors,
+        dataset_val=dm.val_dataset,
+        dataset_size=dm.train_samples,
+    )
 
     logger.info("successfully initialized the model")
 

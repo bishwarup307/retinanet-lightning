@@ -5,6 +5,7 @@ Dataset:
   val_name: "val"
   test_name: null
   image_size: [512, 512, 3]
+  nsr: null
 Model:
   backbone:
     name: "resnet_50"
