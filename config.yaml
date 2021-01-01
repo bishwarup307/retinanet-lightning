@@ -8,12 +8,42 @@ Dataset:
   nsr: null
   augs:
     horizontal_flip:
-      params:
-        proba: 0.5
+      p: 0.5
     vertical_flip:
-      params:
-        proba: 0.5
-        
+      p: 0
+    gamma:
+      p: 0.5
+    sharpness:
+      p: 0.3
+      alpha: [0.1, 0.3]
+    gaussian_blur:
+      p: 0.3
+    contrast:
+      p: 0.5
+    brightness:
+      p: 0.5
+    color_jitter:
+      p: 0.3
+    shift_scale_rotate:
+      p: 0.4
+    superpixels:
+      p: 0
+    additive_noise:
+      p: 0.2
+    perspective:
+      p: 0
+    rgb_shift:
+      p: 0
+      r_shift_limit: 20
+      g_shift_limit: 20
+      b_shift_limit: 20
+    cutout:
+      p: 0
+      max_h_size: 10
+      max_w_size: 10
+    min_area: 1024
+    min_visibility: 0.7
+
 Model:
   backbone:
     name: "resnet_50"

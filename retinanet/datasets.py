@@ -24,8 +24,7 @@ from omegaconf import DictConfig
 
 class DataModule(pl.LightningDataModule):
     def __init__(
-        self,
-        cfg: DictConfig,
+        self, cfg: DictConfig,
     ):
         super(DataModule, self).__init__()
         if cfg.Dataset.dataset != "coco":
@@ -35,6 +34,7 @@ class DataModule(pl.LightningDataModule):
         self.image_dir = Path(cfg.Dataset.root) / "images"
         self.annotation_dir = Path(cfg.Dataset.root) / "annotations"
         self.image_size = cfg.Dataset.image_size[:2]
+        self.augs = cfg.Dataset.augs
 
         self.train_name = ifnone(cfg.Dataset.train_name, "train")
         self.val_name = ifnone(cfg.Dataset.val_name, "val")
@@ -56,9 +56,15 @@ class DataModule(pl.LightningDataModule):
             self.val_image_dir = self.image_dir
             self.test_image_dir = self.image_dir
 
-        self.train_label_path = isfile(self.annotation_dir.joinpath(f"{self.train_name}.{self.label_ext}"))
-        self.val_label_path = isfile(self.annotation_dir.joinpath(f"{self.val_name}.{self.label_ext}"))
-        self.test_label_path = isfile(self.annotation_dir.joinpath(f"{self.test_name}.{self.label_ext}"))
+        self.train_label_path = isfile(
+            self.annotation_dir.joinpath(f"{self.train_name}.{self.label_ext}")
+        )
+        self.val_label_path = isfile(
+            self.annotation_dir.joinpath(f"{self.val_name}.{self.label_ext}")
+        )
+        self.test_label_path = isfile(
+            self.annotation_dir.joinpath(f"{self.test_name}.{self.label_ext}")
+        )
 
     def setup(self, stage: Optional[str] = None):
         if stage == "fit" or stage is None:
@@ -66,6 +72,7 @@ class DataModule(pl.LightningDataModule):
                 image_dir=self.train_image_dir,
                 json_path=self.train_label_path,
                 image_size=self.image_size,
+                transform=self.augs,
                 nsr=self.cfg.Dataset.nsr,
             )
             self.num_classes = len(self.train_dataset.coco.getCatIds())
@@ -96,7 +103,9 @@ class DataModule(pl.LightningDataModule):
 
     def train_dataloader(self, *args, **kwargs) -> DataLoader:
         if self.cfg.Dataset.nsr is not None:
-            sampler = WeightedRandomSampler(self.train_dataset.weights, len(self.train_dataset), replacement=True)
+            sampler = WeightedRandomSampler(
+                self.train_dataset.weights, len(self.train_dataset), replacement=True
+            )
             return DataLoader(
                 self.train_dataset,
                 sampler=sampler,
@@ -171,11 +180,7 @@ class CocoDataset(Dataset):
         except TypeError:
             self.normalize_mean, self.normalize_std = (
                 [0.485, 0.456, 0.406],
-                [
-                    0.229,
-                    0.224,
-                    0.225,
-                ],
+                [0.229, 0.224, 0.225,],
             )
 
         self.coco = COCO(json_path)
@@ -214,6 +219,7 @@ class CocoDataset(Dataset):
         img = self._load_image(idx, normalize=False)  # load image
         annot = self._load_annotations(idx)
         sample = {"img": img, "annot": annot}
+
         if self.image_size is not None:
             resize = Resizer(self.image_size)  # resize
             sample = resize(sample)
@@ -302,8 +308,12 @@ class CocoDataset(Dataset):
 
         sample["img"] = torch.from_numpy(sample["img"].astype(np.float32))
         sample["annot"] = torch.from_numpy(sample["annot"].astype(np.float32))
+
+        # print(sample["annot"])
         # if self.train:
-        gt_boxes, gt_cls = get_anchor_labels(self.anchors, sample["annot"][:, :4], sample["annot"][:, 4])
+        gt_boxes, gt_cls = get_anchor_labels(
+            self.anchors, sample["annot"][:, :4], sample["annot"][:, 4]
+        )
         if self.train:
             return sample["img"].permute(2, 0, 1).contiguous(), gt_boxes, gt_cls
         return (
@@ -329,7 +339,9 @@ class TestDataset(Dataset):
         normalize_std: Optional[List[float]] = None,
     ):
         exts = ["jpg", "png", "tiff", "JPG", "jpeg"]
-        self.images = [x for x in glob.glob(os.path.join(root, "*")) for ext in exts if x.endswith(ext)]
+        self.images = [
+            x for x in glob.glob(os.path.join(root, "*")) for ext in exts if x.endswith(ext)
+        ]
 
         if not len(self.images):
             raise ValueError(f"The specified diretory {root} does not contain any image files")
