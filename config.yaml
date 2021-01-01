@@ -6,6 +6,14 @@ Dataset:
   test_name: null
   image_size: [512, 512, 3]
   nsr: null
+  augs:
+    horizontal_flip:
+      params:
+        proba: 0.5
+    vertical_flip:
+      params:
+        proba: 0.5
+        
 Model:
   backbone:
     name: "resnet_50"
@@ -88,7 +96,3 @@ Trainer:
       logging_interval: null
   save_val_predictions: True
   save_test_predictions: True
-
-
-
-

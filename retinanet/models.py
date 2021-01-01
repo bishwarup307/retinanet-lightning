@@ -316,7 +316,7 @@ class RetinaNet(pl.LightningModule):
         avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs])
         avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs])
         avg_cls_loss = avg_cls_loss[~torch.isnan(avg_cls_loss)].mean()
-        avg_reg_loss = avg_cls_loss[
+        avg_reg_loss = avg_reg_loss[
             ~torch.isnan(avg_reg_loss)
         ].mean()  # a batch with no annotation will likely result in nan reg_loss
 
@@ -338,7 +338,7 @@ class RetinaNet(pl.LightningModule):
             avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs])
             avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs])
             avg_cls_loss = avg_cls_loss[~torch.isnan(avg_cls_loss)].mean()
-            avg_reg_loss = avg_cls_loss[~torch.isnan(avg_reg_loss)].mean()
+            avg_reg_loss = avg_reg_loss[~torch.isnan(avg_reg_loss)].mean()
         except TypeError:
             avg_cls_loss = -1
             avg_reg_loss = -1
