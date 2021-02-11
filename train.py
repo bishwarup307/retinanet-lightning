@@ -4,7 +4,9 @@ Created: 03/12/20
 """
 
 import argparse
-
+from pathlib import Path
+import torch
+import os
 import pytorch_lightning as pl
 from omegaconf import OmegaConf
 
@@ -39,10 +41,7 @@ def main():
     logger.info("successfully loaded data module")
 
     model = RetinaNet(
-        cfg=cfg,
-        anchors=dm.anchors,
-        dataset_val=dm.val_dataset,
-        dataset_size=dm.train_samples,
+        cfg=cfg, anchors=dm.anchors, dataset_val=dm.val_dataset, dataset_size=dm.train_samples,
     )
 
     logger.info("successfully initialized the model")
@@ -71,6 +70,15 @@ def main():
         logger.info("starting test...")
         model.val_coco_gt = dm.test_dataset.coco
         trainer.test(datamodule=dm)
+
+    best_checkpoint = list(Path(model.logger.log_dir).joinpath("checkpoints").glob("*.ckpt"))[0]
+    ckpt = torch.load(best_checkpoint)
+    model.load_state_dict(ckpt["state_dict"])
+    inp_size = cfg.Dataset.image_size[::-1]
+    inp_size.insert(0, 1)
+    sample_input = torch.randn(*inp_size)
+    output_path = os.path.join(model.logger.log_dir, "best.onnx")
+    model.to_onnx(output_path, sample_input, export_params=True, opset_version=11)
 
 
 if __name__ == "__main__":

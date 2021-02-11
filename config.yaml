@@ -46,7 +46,7 @@ Dataset:
 
 Model:
   backbone:
-    name: "resnet_50"
+    name: "resnet_34"
     pretrained: True
     freeze_bn: True
   anchors:
@@ -84,9 +84,9 @@ Trainer:
   logdir: "/home/ubuntu/coco_logs"
   num_epochs: 100
   batch_size:
-    train: 24
-    val: 24
-    test: 24
+    train: 32
+    val: 32
+    test: 32
   optimizer:
     name: "torch.optim.Adam"
     params:
