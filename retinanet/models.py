@@ -54,7 +54,9 @@ class RetinaNet(pl.LightningModule):
     ):
         super(RetinaNet, self).__init__()
         self.save_hyperparameters("cfg")
-        self.backbone = _get_backbone(cfg.Model.backbone.name, pretrained=cfg.Model.backbone.pretrained)
+        self.backbone = _get_backbone(
+            cfg.Model.backbone.name, pretrained=cfg.Model.backbone.pretrained
+        )
         if not cfg.Model.backbone.pretrained:
             self.backbone.apply(init_weights)
         self.num_classes = cfg.Model.head.classification.num_classes
@@ -86,7 +88,9 @@ class RetinaNet(pl.LightningModule):
             gamma=cfg.Model.head.classification.loss.params.gamma,
             reduction="sum",
         )
-        self.regression_loss = nn.SmoothL1Loss(reduction="mean", beta=cfg.Model.head.regression.loss.params.beta)
+        self.regression_loss = nn.SmoothL1Loss(
+            reduction="mean", beta=cfg.Model.head.regression.loss.params.beta
+        )
         self.calculate_bbox = OffsetsToBBox()
         self.nms = NMS()
         # self.anchors = nn.Parameter(anchors, requires_grad=False)
@@ -125,7 +129,9 @@ class RetinaNet(pl.LightningModule):
         self.test_preds = "test" if cfg.Trainer.save_test_predictions else None
         self.optimizer = cfg.Trainer.optimizer
         self.scheduler = cfg.Trainer.scheduler
-        self.total_steps = get_total_steps(dataset_size, cfg.Trainer.batch_size.train) * cfg.Trainer.num_epochs
+        self.total_steps = (
+            get_total_steps(dataset_size, cfg.Trainer.batch_size.train) * cfg.Trainer.num_epochs
+        )
 
         prior_mean = ifnone(cfg.Model.anchors.prior_mean, [0, 0, 0, 0])
         prior_std = ifnone(cfg.Model.anchors.prior_std, [0.1, 0.1, 0.2, 0.2])
@@ -140,7 +146,10 @@ class RetinaNet(pl.LightningModule):
 
         self.classification.block[-1].weight.data.fill_(0)
         self.classification.block[-1].bias.data.fill_(
-            -math.log((1.0 - cfg.Model.head.classification.bias_prior) / cfg.Model.head.classification.bias_prior)
+            -math.log(
+                (1.0 - cfg.Model.head.classification.bias_prior)
+                / cfg.Model.head.classification.bias_prior
+            )
         )
         self.regression.block[-1].weight.data.fill_(0)
         self.regression.block[-1].bias.data.fill_(0)
@@ -187,7 +196,9 @@ class RetinaNet(pl.LightningModule):
         model.model_name = Path(checkpoint_path).stem
         return model
 
-    def _forward_classification_head(self, logits: torch.Tensor, gt_cls: torch.Tensor) -> torch.Tensor:
+    def _forward_classification_head(
+        self, logits: torch.Tensor, gt_cls: torch.Tensor
+    ) -> torch.Tensor:
         num_pos = (gt_cls > 0).sum(axis=1)
         num_assigned = (gt_cls > -1).sum(axis=1)
 
@@ -199,14 +210,13 @@ class RetinaNet(pl.LightningModule):
         ).float()
         # background class is not used for loss calculation
         # https://github.com/facebookresearch/detectron2/blob/master/detectron2/modeling/meta_arch/retinanet.py#L321
-        cls_loss = self.classification_loss(masked_logits, masked_target_one_hot[:, 1:], num_pos, num_assigned)
+        cls_loss = self.classification_loss(
+            masked_logits, masked_target_one_hot[:, 1:], num_pos, num_assigned
+        )
         return cls_loss
 
     def _forward_regression_head(
-        self,
-        pred_box_offsets: torch.Tensor,
-        gt_box_offsets: torch.Tensor,
-        gt_cls: torch.Tensor,
+        self, pred_box_offsets: torch.Tensor, gt_box_offsets: torch.Tensor, gt_cls: torch.Tensor,
     ) -> torch.Tensor:
         mask = gt_cls > 0
         masked_gt = gt_box_offsets[mask]
@@ -222,11 +232,13 @@ class RetinaNet(pl.LightningModule):
         for feature in pyramids:
             cls_pred = self.classification(feature)
             reg_pred = self.regression(feature)
-            cls_pred = cls_pred.permute(0, 2, 3, 1).contiguous().view(t.size(0), -1, self.num_classes)
+            cls_pred = (
+                cls_pred.permute(0, 2, 3, 1).contiguous().view(t.size(0), -1, self.num_classes)
+            )
             reg_pred = reg_pred.permute(0, 2, 3, 1).contiguous().view(t.size(0), -1, 4)
             logits.append(cls_pred)
             offsets.append(reg_pred)
-        return torch.cat(logits, dim=1), torch.cat(offsets, dim=1)
+        return self.anchors, torch.cat(logits, dim=1), torch.cat(offsets, dim=1)
 
     def on_train_start(self) -> None:
         self._save_dataset_attributes()
@@ -242,7 +254,7 @@ class RetinaNet(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         img, gt_boxes, gt_cls = batch
-        logits, offsets = self(img)
+        _, logits, offsets = self(img)
 
         # calculate classification loss
         cls_loss = self._forward_classification_head(logits, gt_cls)
@@ -316,7 +328,7 @@ class RetinaNet(pl.LightningModule):
         avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs])
         avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs])
         avg_cls_loss = avg_cls_loss[~torch.isnan(avg_cls_loss)].mean()
-        avg_reg_loss = avg_cls_loss[
+        avg_reg_loss = avg_reg_loss[
             ~torch.isnan(avg_reg_loss)
         ].mean()  # a batch with no annotation will likely result in nan reg_loss
 
@@ -338,7 +350,7 @@ class RetinaNet(pl.LightningModule):
             avg_cls_loss = torch.stack([x["cls_loss"] for x in outputs])
             avg_reg_loss = torch.stack([x["reg_loss"] for x in outputs])
             avg_cls_loss = avg_cls_loss[~torch.isnan(avg_cls_loss)].mean()
-            avg_reg_loss = avg_cls_loss[~torch.isnan(avg_reg_loss)].mean()
+            avg_reg_loss = avg_reg_loss[~torch.isnan(avg_reg_loss)].mean()
         except TypeError:
             avg_cls_loss = -1
             avg_reg_loss = -1
@@ -351,12 +363,19 @@ class RetinaNet(pl.LightningModule):
         self._adjust_scales_offsets()
         self._sync_processes()
 
-        do_coco_eval = self.val_coco_gt is not None and self.coco_labels is not None and self.dataset_val is not None
+        do_coco_eval = (
+            self.val_coco_gt is not None
+            and self.coco_labels is not None
+            and self.dataset_val is not None
+        )
         if do_coco_eval:
             stats = self.coco_eval(save_name=self.test_preds)
             self._log_coco_results(stats, stage="test")
         else:
             self.save_test_predictions()
+            
+    def on_train_end(self) -> None:
+        pass
 
     #         logger.info(f"test loss(cls): {avg_cls_loss:.4f}")
     #         logger.info(f"test loss(reg): {avg_reg_loss:.4f}")
@@ -387,7 +406,9 @@ class RetinaNet(pl.LightningModule):
         dt = gt.loadRes(self.coco_res)
         if save_name is not None:
             predictions = coco_to_preds(dt)
-            with open(Path(self.logger.log_dir).joinpath(f"{save_name}_predictions.json"), "w") as f:
+            with open(
+                Path(self.logger.log_dir).joinpath(f"{save_name}_predictions.json"), "w"
+            ) as f:
                 json.dump(predictions, f, indent=2)
         coco_eval = COCOeval(gt, dt, "bbox")
         coco_eval.evaluate()
@@ -454,10 +475,14 @@ class RetinaNet(pl.LightningModule):
 
     def _nms_forward(self, img: torch.Tensor, gt_boxes: torch.Tensor, gt_cls: torch.Tensor):
         # img, gt_boxes, gt_cls, scales, offset_x, offset_y, image_ids = batch
-        logits, offsets = self(img)
+        _, logits, offsets = self(img)
 
-        pred_boxes = self.calculate_bbox(self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std)
-        nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(torch.sigmoid(logits), pred_boxes)
+        pred_boxes = self.calculate_bbox(
+            self.anchors, offsets, self.image_size, self.prior_mean, self.prior_std
+        )
+        nms_image_idx, nms_bboxes, nms_classes, nms_scores = self.nms(
+            torch.sigmoid(logits), pred_boxes
+        )
 
         calc_loss = gt_cls is not None and gt_boxes is not None
         cls_loss, reg_loss = None, None
@@ -508,7 +533,9 @@ class RetinaNet(pl.LightningModule):
             logger.info("Optimizer: adam")
 
         #         optimizer = torch.optim.Adam(self.parameters(), lr=3e-4)
-        scheduler = load_obj(self.scheduler.name)(optimizer, total_steps=self.total_steps, **self.scheduler.params)
+        scheduler = load_obj(self.scheduler.name)(
+            optimizer, total_steps=self.total_steps, **self.scheduler.params
+        )
         schedulers = {
             "scheduler": scheduler,
             "interval": "step",
@@ -547,7 +574,9 @@ class ResNet(nn.Module):
     def __init__(self, depth: int, pretrained: bool = False):
 
         if depth not in (18, 34, 50, 101, 152):
-            raise ValueError(f"invalid depth specified. depth must be one of 18, 34, 50, 101, 152, got {depth}")
+            raise ValueError(
+                f"invalid depth specified. depth must be one of 18, 34, 50, 101, 152, got {depth}"
+            )
 
         super(ResNet, self).__init__()
         self.model_repr = f"resnet{depth}"
@@ -702,11 +731,7 @@ class UpsampleSkipBlock(nn.Module):
             )
         self.skip = Conv_1x1(lateral_channels, in_channels)
         self.conv = nn.Conv2d(
-            in_channels=in_channels,
-            out_channels=in_channels,
-            kernel_size=3,
-            stride=1,
-            padding=1,
+            in_channels=in_channels, out_channels=in_channels, kernel_size=3, stride=1, padding=1,
         )
 
     def forward(self, top: torch.Tensor, skip: torch.Tensor):
@@ -757,7 +782,9 @@ class FPN(nn.Module):
         self.p4 = UpsampleSkipBlock(channels, ch_c4, upsample)
         self.p3 = UpsampleSkipBlock(channels, ch_c3, upsample)
         self.p6 = nn.Conv2d(ch_c5, channels, kernel_size=3, stride=2, padding=1)
-        self.p7 = nn.Sequential(nn.ReLU(), nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1))
+        self.p7 = nn.Sequential(
+            nn.ReLU(), nn.Conv2d(channels, channels, kernel_size=3, stride=2, padding=1)
+        )
 
     def forward(self, C3: torch.Tensor, C4: torch.Tensor, C5: torch.Tensor):
         P5_1 = self.p5_1(C5)
@@ -805,7 +832,9 @@ def _get_backbone(name: str, depth: Optional[int] = None, pretrained: Optional[b
             raise e
 
     if name not in backbones:
-        raise ValueError(f"Invalid backbone specified. Currently supported {','.join(list(backbones.keys()))}")
+        raise ValueError(
+            f"Invalid backbone specified. Currently supported {','.join(list(backbones.keys()))}"
+        )
 
     return backbones[name](depth=depth, pretrained=pretrained)
 
@@ -880,7 +909,9 @@ class NMS(nn.Module):
         # print(f"batched_nms >> num_classes: {num_classes}")
         # print(logits.size())
         scores, class_indices = logits.max(dim=2)
-        rows = (torch.arange(batch_size, dtype=torch.long)[:, None] * num_classes).type_as(class_indices)
+        rows = (torch.arange(batch_size, dtype=torch.long)[:, None] * num_classes).type_as(
+            class_indices
+        )
         cat_idx = class_indices + rows
         #         print(f"batched_nms >> max_score: {scores.max()}")
         #         print(f"batched_nms >> min_score: {scores.min()}")
@@ -897,7 +928,9 @@ class NMS(nn.Module):
         # print(category_idx.size())
         # print(scores[mask].size())
 
-        keep_indices = torchvision.ops.boxes.batched_nms(boxes[mask], scores[mask], cat_idx[mask], self.nms_threshold)
+        keep_indices = torchvision.ops.boxes.batched_nms(
+            boxes[mask], scores[mask], cat_idx[mask], self.nms_threshold
+        )
         nms_image_idx = image_ids[keep_indices]
         nms_bboxes = boxes[mask][keep_indices]
         nms_scores = scores[mask][keep_indices]

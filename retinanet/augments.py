@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Tuple
 import cv2
 import numpy as np
 import albumentations as A
+from omegaconf import ListConfig, DictConfig
 import torch
 
 from retinanet import utils
@@ -17,7 +18,9 @@ class Resizer:
 
     def __init__(self, size: Tuple[int, int], resize_mode: str = "letterbox"):
         if resize_mode not in ("letterbox", "minmax"):
-            raise ValueError(f"`resize_mode` should be either `letterbox` or `minmax`, got {resize_mode}")
+            raise ValueError(
+                f"`resize_mode` should be either `letterbox` or `minmax`, got {resize_mode}"
+            )
         self.size = size
         self.resize_fn = {"letterbox": letterbox, "minmax": min_max_resize}[resize_mode]
 
@@ -75,53 +78,64 @@ class UnNormalizer:
 
 class Augmenter:
     def __init__(self, transforms: Dict, bbox_mode: str = "pascal_voc"):
-        self.transforms = {k: v for k, v in transforms.items() if v}
+        self.transforms = dict()
+        for k, v in transforms.items():
+            # if isinstance(v, DictConfig):
+            #     for k_, v_ in v.items():
+            #         if isinstance(v_, ListConfig):
+            #             v[k_] = tuple(v_)
+            #             a[k_] = tuple(v_)
+            #     print(v)
+            #     print(a)
+            self.transforms[k] = self._parse_config(v)
         self.bbox_mode = bbox_mode
+        self._compose_augments()
 
-    def __call__(self, sample) -> Dict:
+    @staticmethod
+    def _parse_config(aug):
+        if isinstance(aug, DictConfig):
+            a = dict()
+            for k, v in aug.items():
+                if isinstance(v, ListConfig):
+                    a[k] = tuple(v)
+                else:
+                    a[k] = v
+            return a
+        return aug
 
-        if len(self.transforms) <= 2:
-            return sample
-
+    def _compose_augments(self):
         augs = []
         for name, params in self.transforms.items():
-            if name == "hflip":
-                augs.append(A.HorizontalFlip(p=params))
-            if name == "vflip":
-                augs.append(A.VerticalFlip(p=params))
+            if name == "horizontal_flip":
+                augs.append(A.HorizontalFlip(**params))
+            if name == "vertical_flip":
+                augs.append(A.VerticalFlip(**params))
             if name == "shift_scale_rotate":
-                augs.append(A.ShiftScaleRotate(p=params))
+                augs.append(A.ShiftScaleRotate(**params))
             if name == "gamma":
-                augs.append(A.RandomGamma(p=params))
+                augs.append(A.RandomGamma(**params))
             if name == "sharpness":
-                augs.append(A.IAASharpen(p=params))
+                augs.append(A.IAASharpen(**params))
             if name == "gaussian_blur":
-                augs.append(A.GaussianBlur(p=params))
+                augs.append(A.GaussianBlur(**params))
             if name == "super_pixels":
-                augs.append(A.IAASuperpixels(p=params))
+                augs.append(A.IAASuperpixels(**params))
             if name == "additive_noise":
-                augs.append(A.IAAAdditiveGaussianNoise(p=params))
+                augs.append(A.IAAAdditiveGaussianNoise(**params))
             if name == "perspective":
-                augs.append(A.IAAPerspective(p=params))
+                augs.append(A.IAAPerspective(**params))
             if name == "color_jitter":
-                augs.append(A.ColorJitter(p=params))
+                augs.append(A.ColorJitter(**params))
             if name == "brightness":
-                augs.append(A.RandomBrightness(p=params))
+                augs.append(A.RandomBrightness(**params))
             if name == "contrast":
-                augs.append(A.RandomContrast(p=params))
+                augs.append(A.RandomContrast(**params))
 
             if name == "rgb_shift":
-                augs.append(
-                    A.RGBShift(
-                        r_shift_limit=params[0],
-                        g_shift_limit=params[1],
-                        b_shift_limit=params[2],
-                        p=params[3],
-                    )
-                )
+                augs.append(A.RGBShift(**params))
             if name == "cutout":
-                augs.append(A.Cutout(max_h_size=params[0], max_w_size=params[1], p=params[2]))
-        trsf = A.Compose(
+                augs.append(A.Cutout(**params))
+        self.trsf = A.Compose(
             augs,
             bbox_params=A.BboxParams(
                 format="pascal_voc",
@@ -130,7 +144,13 @@ class Augmenter:
                 min_area=self.transforms["min_area"],
             ),
         )
-        transformed = trsf(
+
+    def __call__(self, sample) -> Dict:
+
+        # if len(self.transforms) <= 2:
+        #     return sample
+
+        transformed = self.trsf(
             image=sample["img"],
             bboxes=sample["annot"][:, :-1],
             category_ids=sample["annot"][:, -1],
@@ -144,7 +164,7 @@ class Augmenter:
                 axis=1,
             )
         else:
-            annot = np.array([])
+            annot = np.zeros((0, 5))
 
         sample["img"] = transformed["image"]
         sample["annot"] = annot
@@ -206,7 +226,9 @@ def min_max_resize(image: np.ndarray, sizes: Tuple[int, int]):
     if largest_side * scale > max_size:
         scale = max_size / largest_side
     # resize the image with the computed scale
-    image = cv2.resize(image, (int(round((cols * scale))), int(round(rows * scale))), interpolation=cv2.INTER_CUBIC)
+    image = cv2.resize(
+        image, (int(round((cols * scale))), int(round(rows * scale))), interpolation=cv2.INTER_CUBIC
+    )
     rows, cols, cns = image.shape
 
     pad_w = (32 - rows % 32) % 32
